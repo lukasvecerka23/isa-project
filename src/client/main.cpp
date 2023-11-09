@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <getopt.h>
+#include "client/tftp_client.hpp"
 // include other necessary headers
 
 // Define the long options
@@ -53,13 +54,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // At this point, all arguments should be parsed.
-    std::cout << "Hostname: " << hostname << "\n"
-              << "Port: " << port << "\n"
-              << "Filepath: " << (upload ? "stdin" : filepath) << "\n"
-              << "Destination: " << dest_filepath << "\n";
-
-    // Your TFTP client logic goes here.
+    try {
+        TFTPClient client(hostname, port); // Create an instance of the TFTPClient with the given host and port
+        
+        // Check the operation mode based on the presence of the filepath
+        if (upload) {
+            // If no filepath is provided, assume data will come from stdin.
+            client.upload(dest_filepath);
+        } else {
+            // Otherwise, download the file from the given filepath.
+            client.download(filepath, dest_filepath);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 
     return 0;
 }
