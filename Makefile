@@ -1,13 +1,48 @@
-CXX = g++
-CXXFLAGS = -std=c++11 -Wall -Iinclude
+CXX := g++
+CXXFLAGS := -std=c++11 -Wall -Iinclude
+LDFLAGS :=
 
-all: server client
+SRC_DIR := src
+INC_DIR := include
+BUILD_DIR := build
 
-server: src/server.cpp
-	$(CXX) $(CXXFLAGS) -o build/tftp-server src/server.cpp
+CLIENT_TARGET := $(BUILD_DIR)/client/tftp-client
+SERVER_TARGET := $(BUILD_DIR)/server/tftp-server
 
-client: src/client.cpp
-	$(CXX) $(CXXFLAGS) -o build/tftp-client src/client.cpp
+COMMON_SRC := $(wildcard $(SRC_DIR)/common/*.cpp)
+COMMON_OBJ := $(patsubst $(SRC_DIR)/common/%.cpp,$(BUILD_DIR)/common/%.o,$(COMMON_SRC))
+
+CLIENT_SRC := $(wildcard $(SRC_DIR)/client/*.cpp)
+CLIENT_OBJ := $(patsubst $(SRC_DIR)/client/%.cpp,$(BUILD_DIR)/client/%.o,$(CLIENT_SRC))
+
+SERVER_SRC := $(wildcard $(SRC_DIR)/server/*.cpp)
+SERVER_OBJ := $(patsubst $(SRC_DIR)/server/%.cpp,$(BUILD_DIR)/server/%.o,$(SERVER_SRC))
+
+.PHONY: all clean client server
+
+all: client server
+
+client: $(CLIENT_TARGET)
+
+server: $(SERVER_TARGET)
+
+$(CLIENT_TARGET): $(COMMON_OBJ) $(CLIENT_OBJ)
+	$(CXX) $(LDFLAGS) $^ -o $@
+
+$(SERVER_TARGET): $(COMMON_OBJ) $(SERVER_OBJ)
+	$(CXX) $(LDFLAGS) $^ -o $@
+
+$(BUILD_DIR)/common/%.o: $(SRC_DIR)/common/%.cpp | $(BUILD_DIR)/common
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/client/%.o: $(SRC_DIR)/client/%.cpp | $(BUILD_DIR)/client
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/server/%.o: $(SRC_DIR)/server/%.cpp | $(BUILD_DIR)/server
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/common $(BUILD_DIR)/client $(BUILD_DIR)/server:
+	mkdir -p $@
 
 clean:
-	rm -rf build/*
+	rm -rf $(BUILD_DIR)

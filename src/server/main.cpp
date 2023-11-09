@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <getopt.h>
+#include "server/tftp_server.hpp"
 
 // include other necessary headers
 
@@ -42,13 +43,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // All arguments should be parsed at this point.
-    std::cout << "Server starting on port: " << port << "\n"
-              << "Root directory: " << root_dirpath << "\n";
-
-    // Your TFTP server logic goes here.
-    // You would set up a socket to listen on the given port and handle requests,
-    // storing incoming files to the given root directory.
+    // Initialize and start the TFTP server
+    try {
+        TFTPServer tftpServer(port, root_dirpath);
+        tftpServer.start();
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to start TFTP server: " << e.what() << std::endl;
+        return 1;
+    }
 
     return 0;
 }
