@@ -1,5 +1,6 @@
 // tftp_server.cpp
 #include "server/tftp_server.hpp"
+#include "common/packets.hpp"
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
@@ -51,8 +52,15 @@ void TFTPServer::start() {
             continue; // In a real server you might want to handle this differently
         }
 
-        // Print the received data to stdout for demonstration purposes
-        std::cout << "Received data: " << std::string(buffer, received_bytes) << std::endl;
+        try {
+            std::unique_ptr<TFTPPacket> packet = TFTPPacket::parse(buffer, received_bytes);
+
+            // The correct handlePacket method will be called based on the actual packet type
+            packet->handlePacket();
+        } catch (const std::runtime_error& e) {
+            std::cerr << "Failed to parse packet: " << e.what() << std::endl;
+            // Handle error
+        }
 
         // Here you would normally process the received data and respond accordingly
         // For now, just echo the data back to the sender for testing purposes

@@ -1,5 +1,6 @@
 // tftp_server.cpp
 #include "client/tftp_client.hpp"
+#include "common/packets.hpp"
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
@@ -39,12 +40,11 @@ void TFTPClient::upload(std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    // Prepare data to be sent
-    const char* message = "Hello TFTP Server!";
-    size_t message_length = std::strlen(message);
+    TFTPErrorPacket packet(5, "Zde je error"); // Create an ACK packet with block number 0
+    std::vector<char> message = packet.serialize();
 
     // Send data to server
-    if (sendto(sockfd, message, message_length, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    if (sendto(sockfd, message.data(), message.size(), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "Sendto failed\n";
         close(sockfd);
         return;
