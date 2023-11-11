@@ -12,6 +12,7 @@ public:
 private:
     int port;
     std::string rootDirPath;
+    int sockfd;
 };
 
 #endif 

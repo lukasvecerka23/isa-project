@@ -4,62 +4,62 @@
 #include <vector>
 #include <string>
 
-class TFTPPacket {
+class Packet {
 public:
-    virtual ~TFTPPacket() = default;
+    virtual ~Packet() = default;
     virtual std::vector<char> serialize() const = 0;
     virtual void handlePacket() const = 0;
 
-    static std::unique_ptr<TFTPPacket> parse(const char* buffer, size_t bufferSize);
+    static std::unique_ptr<Packet> parse(const char* buffer, size_t bufferSize);
 };
 
-class TFTPRequestPacket : public TFTPPacket {
+class RequestPacket : public Packet {
 public:
     std::string filename;
     std::string mode;
     virtual uint16_t getOpcode() const = 0;
-    TFTPRequestPacket(const std::string& filename, const std::string& mode);
+    RequestPacket(const std::string& filename, const std::string& mode);
     std::vector<char> serialize() const override;
 };
 
-class TFTPReadRequestPacket : public TFTPRequestPacket {
+class ReadRequestPacket : public RequestPacket {
 public:
-    using TFTPRequestPacket::TFTPRequestPacket;
+    using RequestPacket::RequestPacket;
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
 };
 
-class TFTPWriteRequestPacket : public TFTPRequestPacket {
+class WriteRequestPacket : public RequestPacket {
 public:
-    using TFTPRequestPacket::TFTPRequestPacket;
+    using RequestPacket::RequestPacket;
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
 };
 
-class TFTPDataPacket : public TFTPPacket {
+class DataPacket : public Packet {
 public:
     uint16_t blockNumber;
     std::vector<char> data;
-    TFTPDataPacket(uint16_t blockNumber, const std::vector<char>& data);
+    DataPacket(uint16_t blockNumber, const std::vector<char>& data);
     std::vector<char> serialize() const override;
 };
 
-class TFTPACKPacket : public TFTPPacket {
+class ACKPacket : public Packet {
 public:
     uint16_t blockNumber;
-    TFTPACKPacket(uint16_t blockNumber);
+    ACKPacket(uint16_t blockNumber);
     std::vector<char> serialize() const override;
     void handlePacket() const override;
 
-    static TFTPACKPacket parse(const char* buffer, size_t size);
+    static ACKPacket parse(const char* buffer, size_t size);
 };
 
-class TFTPErrorPacket : public TFTPPacket {
+class ErrorPacket : public Packet {
 public:
     uint16_t errorCode;
     std::string errorMessage;
-    TFTPErrorPacket(uint16_t errorCode, const std::string& errorMessage);
+    ErrorPacket(uint16_t errorCode, const std::string& errorMessage);
     void handlePacket() const override;
     std::vector<char> serialize() const override;
-    static TFTPErrorPacket parse(const char* buffer, size_t size);
+    static ErrorPacket parse(const char* buffer, size_t size);
 };
 
 #endif // PACKETS_HPP

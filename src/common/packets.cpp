@@ -5,7 +5,7 @@
 #include <iostream>
 #include <string>
 
-std::unique_ptr<TFTPPacket> TFTPPacket::parse(const char* buffer, size_t bufferSize) {
+std::unique_ptr<Packet> Packet::parse(const char* buffer, size_t bufferSize) {
     if (bufferSize < 2) {
         throw std::runtime_error("Buffer too short to determine opcode");
     }
@@ -14,9 +14,9 @@ std::unique_ptr<TFTPPacket> TFTPPacket::parse(const char* buffer, size_t bufferS
 
     switch (opcode) {
         case 4: // ACK
-            return std::make_unique<TFTPACKPacket>(TFTPACKPacket::parse(buffer, bufferSize));
+            return std::make_unique<ACKPacket>(ACKPacket::parse(buffer, bufferSize));
         case 5: // ERROR
-            return std::make_unique<TFTPErrorPacket>(TFTPErrorPacket::parse(buffer, bufferSize));
+            return std::make_unique<ErrorPacket>(ErrorPacket::parse(buffer, bufferSize));
         // Handle other opcodes (RRQ, WRQ, DATA, ERROR) similarly
         default:
             throw std::runtime_error("Unknown or unhandled TFTP opcode");
@@ -24,11 +24,11 @@ std::unique_ptr<TFTPPacket> TFTPPacket::parse(const char* buffer, size_t bufferS
 }
 
 // Constructor for TFTPRequestPacket
-TFTPRequestPacket::TFTPRequestPacket(const std::string& filename, const std::string& mode)
+RequestPacket::RequestPacket(const std::string& filename, const std::string& mode)
     : filename(filename), mode(mode) {}
 
 // Serialize method for TFTPRequestPacket
-std::vector<char> TFTPRequestPacket::serialize() const {
+std::vector<char> RequestPacket::serialize() const {
     std::vector<char> buffer;
     uint16_t opcode = getOpcode();
     buffer.push_back((opcode >> 8) & 0xFF);
@@ -41,11 +41,11 @@ std::vector<char> TFTPRequestPacket::serialize() const {
 }
 
 // Constructor for TFTPDataPacket
-TFTPDataPacket::TFTPDataPacket(uint16_t blockNumber, const std::vector<char>& data)
+DataPacket::DataPacket(uint16_t blockNumber, const std::vector<char>& data)
     : blockNumber(blockNumber), data(data) {}
 
 // Serialize method for TFTPDataPacket
-std::vector<char> TFTPDataPacket::serialize() const {
+std::vector<char> DataPacket::serialize() const {
     std::vector<char> buffer;
     buffer.push_back(0);
     buffer.push_back(3); // Opcode for DATA
@@ -56,10 +56,10 @@ std::vector<char> TFTPDataPacket::serialize() const {
 }
 
 // Constructor for TFTPACKPacket
-TFTPACKPacket::TFTPACKPacket(uint16_t blockNumber) : blockNumber(blockNumber) {}
+ACKPacket::ACKPacket(uint16_t blockNumber) : blockNumber(blockNumber) {}
 
 // Serialize method for TFTPACKPacket
-std::vector<char> TFTPACKPacket::serialize() const {
+std::vector<char> ACKPacket::serialize() const {
     std::vector<char> buffer;
     buffer.push_back(0);
     buffer.push_back(4); // Opcode for ACK
@@ -69,7 +69,7 @@ std::vector<char> TFTPACKPacket::serialize() const {
 }
 
 // Static parse method implementation
-TFTPACKPacket TFTPACKPacket::parse(const char* buffer, size_t bufferSize) {
+ACKPacket ACKPacket::parse(const char* buffer, size_t bufferSize) {
     if (bufferSize < 4) {
         throw std::runtime_error("Buffer too short for ACK packet");
     }
@@ -80,19 +80,19 @@ TFTPACKPacket TFTPACKPacket::parse(const char* buffer, size_t bufferSize) {
     }
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
-    return TFTPACKPacket(blockNumber);
+    return ACKPacket(blockNumber);
 }
 
-void TFTPACKPacket::handlePacket() const {
+void ACKPacket::handlePacket() const {
     std::cout << "Received ACK packet with block number: " << blockNumber << std::endl;
 }
 
 // Constructor for TFTPErrorPacket
-TFTPErrorPacket::TFTPErrorPacket(uint16_t errorCode, const std::string& errorMessage)
+ErrorPacket::ErrorPacket(uint16_t errorCode, const std::string& errorMessage)
     : errorCode(errorCode), errorMessage(errorMessage) {}
 
 // Static parse method implementation
-TFTPErrorPacket TFTPErrorPacket::parse(const char* buffer, size_t bufferSize) {
+ErrorPacket ErrorPacket::parse(const char* buffer, size_t bufferSize) {
     // parsing error packet
     if (bufferSize < 5){
         throw std::runtime_error("Buffer too short for ERROR packet");
@@ -105,16 +105,16 @@ TFTPErrorPacket TFTPErrorPacket::parse(const char* buffer, size_t bufferSize) {
 
     uint16_t errorCode = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     std::string errorMessage = std::string(buffer + 4, buffer + bufferSize - 1);
-    return TFTPErrorPacket(errorCode, errorMessage);
+    return ErrorPacket(errorCode, errorMessage);
 }
 
-void TFTPErrorPacket::handlePacket() const {
+void ErrorPacket::handlePacket() const {
     std::cerr << "Received ERROR packet with error code: " << errorCode 
               << " and error message: " << errorMessage << std::endl;
 }
 
 // Serialize method for TFTPErrorPacket
-std::vector<char> TFTPErrorPacket::serialize() const {
+std::vector<char> ErrorPacket::serialize() const {
     std::vector<char> buffer;
     buffer.push_back(0);
     buffer.push_back(5); // Opcode for ERROR

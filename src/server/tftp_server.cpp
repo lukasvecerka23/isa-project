@@ -9,33 +9,29 @@
 #include <unistd.h>
 
 TFTPServer::TFTPServer(int port, std::string rootDirPath)
-    : port(port), rootDirPath(std::move(rootDirPath)) {}
+    : port(port), rootDirPath(std::move(rootDirPath)) {
+        // Create socket
+        int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sockfd < 0) {
+            throw std::runtime_error("Failed to open socket");
+        }
+        // Initialize server address structure
+        struct sockaddr_in server_addr;
+        std::memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
+        server_addr.sin_port = htons(port);
+
+        // Bind socket to the server address
+        if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+            close(sockfd);
+            throw std::runtime_error("Failed to bind socket to port");
+        }
+        std::cout << "Starting TFTP server on port " << port 
+        << " with root directory: " << rootDirPath << std::endl;
+    }
 
 void TFTPServer::start() {
-    std::cout << "Starting TFTP server on port " << port 
-              << " with root directory: " << rootDirPath << std::endl;
-
-        // Create socket
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        std::cerr << "Cannot open socket\n";
-        return;
-    }
-
-    // Initialize server address structure
-    struct sockaddr_in server_addr;
-    std::memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
-    server_addr.sin_port = htons(port);
-
-    // Bind socket to the server address
-    if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "Cannot bind socket to port " << port << "\n";
-        close(sockfd);
-        return;
-    }
-
     std::cout << "Server listening on port " << port << std::endl;
 
     // Enter a loop to receive data
@@ -53,7 +49,7 @@ void TFTPServer::start() {
         }
 
         try {
-            std::unique_ptr<TFTPPacket> packet = TFTPPacket::parse(buffer, received_bytes);
+            std::unique_ptr<Packet> packet = Packet::parse(buffer, received_bytes);
 
             // The correct handlePacket method will be called based on the actual packet type
             packet->handlePacket();

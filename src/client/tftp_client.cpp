@@ -40,7 +40,7 @@ void TFTPClient::upload(std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    TFTPErrorPacket packet(5, "Zde je error"); // Create an ACK packet with block number 0
+    ErrorPacket packet(5, "Zde je error"); // Create an ACK packet with block number 0
     std::vector<char> message = packet.serialize();
 
     // Send data to server
