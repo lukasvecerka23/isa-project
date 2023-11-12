@@ -3,43 +3,58 @@
 
 #include <vector>
 #include <string>
+#include <netinet/in.h>
+#include "common/session.hpp"
 
 class Packet {
 public:
     virtual ~Packet() = default;
     virtual std::vector<char> serialize() const = 0;
-    virtual void handlePacket() const = 0;
-
-    static std::unique_ptr<Packet> parse(const char* buffer, size_t bufferSize);
+    virtual uint16_t getOpcode() const = 0;
+    virtual void handleClient(ClientSession& session) const {}
+    virtual void handleServer(ServerSession& session) const {}
+    sockaddr_in addr;
+    
+    static std::unique_ptr<Packet> parse(sockaddr_in addr, const char* buffer, size_t bufferSize);
+    void send(int socket, sockaddr_in dst_addr) const;
 };
 
 class RequestPacket : public Packet {
 public:
     std::string filename;
     std::string mode;
-    virtual uint16_t getOpcode() const = 0;
     RequestPacket(const std::string& filename, const std::string& mode);
     std::vector<char> serialize() const override;
 };
 
 class ReadRequestPacket : public RequestPacket {
 public:
-    using RequestPacket::RequestPacket;
+    ReadRequestPacket(const std::string& filename, const std::string& mode);
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
+    static ReadRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
 };
 
 class WriteRequestPacket : public RequestPacket {
 public:
-    using RequestPacket::RequestPacket;
+    WriteRequestPacket(const std::string& filename, const std::string& mode);
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
+    static WriteRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
 };
 
 class DataPacket : public Packet {
 public:
     uint16_t blockNumber;
-    std::vector<char> data;
-    DataPacket(uint16_t blockNumber, const std::vector<char>& data);
+    std::string data;
+    DataPacket(uint16_t blockNumber, const std::string& data);
     std::vector<char> serialize() const override;
+    static DataPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    uint16_t getOpcode() const override { return 3; } // DATA opcode
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
 };
 
 class ACKPacket : public Packet {
@@ -47,9 +62,10 @@ public:
     uint16_t blockNumber;
     ACKPacket(uint16_t blockNumber);
     std::vector<char> serialize() const override;
-    void handlePacket() const override;
-
-    static ACKPacket parse(const char* buffer, size_t size);
+    static ACKPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    uint16_t getOpcode() const override { return 4; } // ACK opcode
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
 };
 
 class ErrorPacket : public Packet {
@@ -57,9 +73,11 @@ public:
     uint16_t errorCode;
     std::string errorMessage;
     ErrorPacket(uint16_t errorCode, const std::string& errorMessage);
-    void handlePacket() const override;
     std::vector<char> serialize() const override;
-    static ErrorPacket parse(const char* buffer, size_t size);
+    static ErrorPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    uint16_t getOpcode() const override { return 5; } // ERROR opcode
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
 };
 
 #endif // PACKETS_HPP

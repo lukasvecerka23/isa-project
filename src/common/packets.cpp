@@ -1,11 +1,17 @@
 #include "common/packets.hpp"
+#include "common/session.hpp"
 #include <vector>
 #include <memory>
 #include <stdexcept>
 #include <iostream>
 #include <string>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
-std::unique_ptr<Packet> Packet::parse(const char* buffer, size_t bufferSize) {
+
+// PACKET
+std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     if (bufferSize < 2) {
         throw std::runtime_error("Buffer too short to determine opcode");
     }
@@ -13,16 +19,33 @@ std::unique_ptr<Packet> Packet::parse(const char* buffer, size_t bufferSize) {
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
 
     switch (opcode) {
+        case 1: // RRQ
+            return std::make_unique<ReadRequestPacket>(ReadRequestPacket::parse(addr, buffer, bufferSize));
+        case 2: // WRQ
+            return std::make_unique<WriteRequestPacket>(WriteRequestPacket::parse(addr, buffer, bufferSize));
+        case 3: // DATA
+            return std::make_unique<DataPacket>(DataPacket::parse(addr, buffer, bufferSize));
         case 4: // ACK
-            return std::make_unique<ACKPacket>(ACKPacket::parse(buffer, bufferSize));
+            return std::make_unique<ACKPacket>(ACKPacket::parse(addr, buffer, bufferSize));
         case 5: // ERROR
-            return std::make_unique<ErrorPacket>(ErrorPacket::parse(buffer, bufferSize));
-        // Handle other opcodes (RRQ, WRQ, DATA, ERROR) similarly
+            return std::make_unique<ErrorPacket>(ErrorPacket::parse(addr, buffer, bufferSize));
         default:
             throw std::runtime_error("Unknown or unhandled TFTP opcode");
     }
 }
 
+void Packet::send(int socket, sockaddr_in dst_addr) const {
+    std::vector<char> message = serialize();
+    ssize_t sentBytes = sendto(socket, message.data(), message.size(), 0, (struct sockaddr*)&dst_addr, sizeof(dst_addr));
+
+    if (sentBytes < 0) {
+        std::cout << "Failed to send data\n";
+        return;
+    }
+}
+
+
+// REQUEST PACKET
 // Constructor for TFTPRequestPacket
 RequestPacket::RequestPacket(const std::string& filename, const std::string& mode)
     : filename(filename), mode(mode) {}
@@ -40,9 +63,83 @@ std::vector<char> RequestPacket::serialize() const {
     return buffer;
 }
 
-// Constructor for TFTPDataPacket
-DataPacket::DataPacket(uint16_t blockNumber, const std::vector<char>& data)
+// WRITE REQUEST PACKET
+// Constructor
+WriteRequestPacket::WriteRequestPacket(const std::string& filename, const std::string& mode)
+    : RequestPacket(filename, mode) {}
+
+WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
+    // parsing write request packet
+    std::cout << bufferSize << std::endl;
+    if (bufferSize < 4){
+        throw std::runtime_error("Buffer too short for WRQ packet");
+    }
+
+    const char* filenameEnd = std::find(buffer + 2, buffer + bufferSize, '\0');
+
+    std::string filename = std::string(buffer + 2, filenameEnd);
+    std::string mode = std::string(buffer + 2 + filename.size() + 1, buffer + bufferSize - 1);
+    std::cerr << "WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << mode << std::endl;
+    return WriteRequestPacket(filename, mode);
+}
+
+void WriteRequestPacket::handleClient(ClientSession& session) const {
+    std::cout << "Write request packet" << std::endl;
+}
+
+void WriteRequestPacket::handleServer(ServerSession& session) const {
+    std::cout << "Write request packet" << std::endl;
+}
+
+// READ REQUEST PACKET
+// Constructor
+ReadRequestPacket::ReadRequestPacket(const std::string& filename, const std::string& mode)
+    : RequestPacket(filename, mode) {}
+
+ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
+    // parsing read request packet
+    if (bufferSize < 4){
+        throw std::runtime_error("Buffer too short for RRQ packet");
+    }
+
+    const char* filenameEnd = std::find(buffer + 2, buffer + bufferSize, '\0');
+
+    std::string filename = std::string(buffer + 2, filenameEnd);
+    std::string mode = std::string(buffer + 2 + filename.size() + 1, buffer + bufferSize - 1);
+    std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << mode << std::endl;
+    return ReadRequestPacket(filename, mode);
+}
+
+void ReadRequestPacket::handleClient(ClientSession& session) const {
+    std::cout << "Read request packet" << std::endl;
+}
+
+void ReadRequestPacket::handleServer(ServerSession& session) const {
+    std::cout << "Read request packet" << std::endl;
+}
+
+
+// DATA PACKET
+// Constructor
+DataPacket::DataPacket(uint16_t blockNumber, const std::string& data)
     : blockNumber(blockNumber), data(data) {}
+
+DataPacket DataPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
+    // parsing data packet
+    if (bufferSize < 4){
+        throw std::runtime_error("Buffer too short for DATA packet");
+    }
+
+    uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
+    if (opcode != 3) { // 3 is the opcode for DATA
+        throw std::runtime_error("Invalid opcode for DATA packet");
+    }
+
+    uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
+    std::string data(buffer + 4, buffer + bufferSize - 1);
+    std::cerr << "DATA " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << blockNumber << std::endl;
+    return DataPacket(blockNumber, data);
+}
 
 // Serialize method for TFTPDataPacket
 std::vector<char> DataPacket::serialize() const {
@@ -55,10 +152,47 @@ std::vector<char> DataPacket::serialize() const {
     return buffer;
 }
 
-// Constructor for TFTPACKPacket
+void DataPacket::handleClient(ClientSession& session) const {
+    std::cout << "Data packet" << std::endl;
+}
+
+void DataPacket::handleServer(ServerSession& session) const {
+    switch(session.sessionState){
+        case SessionState::WAITING_DATA:
+        {
+            if (session.blockNumber == 5){
+                ACKPacket ackPacket(session.blockNumber);
+                ackPacket.send(session.sessionSockfd, session.dst_addr);
+                session.sessionState = SessionState::END;
+                break;
+            }
+            if (session.blockNumber == this->blockNumber){
+                ACKPacket ackPacket(session.blockNumber);
+                ackPacket.send(session.sessionSockfd, session.dst_addr);
+                session.blockNumber++;
+            }
+            break;
+        }
+        case SessionState::END:
+        {
+            ACKPacket ackPacket(session.blockNumber);
+            ackPacket.send(session.sessionSockfd, session.dst_addr);
+            break;
+        }
+        default:
+        {
+            std::cout << "Bad state" << std::endl;
+            break;
+        }
+    }
+}
+
+
+// ACK PACKET
+// Constructor
 ACKPacket::ACKPacket(uint16_t blockNumber) : blockNumber(blockNumber) {}
 
-// Serialize method for TFTPACKPacket
+// Serialize method
 std::vector<char> ACKPacket::serialize() const {
     std::vector<char> buffer;
     buffer.push_back(0);
@@ -69,7 +203,7 @@ std::vector<char> ACKPacket::serialize() const {
 }
 
 // Static parse method implementation
-ACKPacket ACKPacket::parse(const char* buffer, size_t bufferSize) {
+ACKPacket ACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     if (bufferSize < 4) {
         throw std::runtime_error("Buffer too short for ACK packet");
     }
@@ -80,19 +214,55 @@ ACKPacket ACKPacket::parse(const char* buffer, size_t bufferSize) {
     }
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
+    std::cerr << "ACK " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << blockNumber << std::endl;
     return ACKPacket(blockNumber);
 }
 
-void ACKPacket::handlePacket() const {
-    std::cout << "Received ACK packet with block number: " << blockNumber << std::endl;
+void ACKPacket::handleClient(ClientSession& session) const {
+    switch(session.sessionState){
+        case SessionState::INITIAL:
+        {
+            session.srcTID = ntohs(session.dst_addr.sin_port);
+            std::cout << "srcTID: " << session.srcTID << std::endl;
+            session.blockNumber = 1;
+            DataPacket dataPacket(session.blockNumber, "test");
+            dataPacket.send(session.sessionSockfd, session.dst_addr);
+            session.sessionState = SessionState::WAITING_ACK;
+            break;
+        }
+        case SessionState::WAITING_ACK:
+        {
+            if (session.blockNumber == 5){
+                session.sessionState = SessionState::END;
+                break;
+            }
+            if (session.blockNumber == this->blockNumber){
+                session.blockNumber++;
+                DataPacket dataPacket(session.blockNumber, "test");
+                dataPacket.send(session.sessionSockfd, session.dst_addr);
+            }
+            break;
+        }
+        default:
+        {
+            std::cout << "Bad state" << std::endl;
+            break;
+        }
+    }
 }
 
-// Constructor for TFTPErrorPacket
+void ACKPacket::handleServer(ServerSession& session) const {
+    std::cout << "Ack packet" << std::endl;
+}
+
+
+// ERROR PACKET
+// Constructor for ErrorPacket
 ErrorPacket::ErrorPacket(uint16_t errorCode, const std::string& errorMessage)
     : errorCode(errorCode), errorMessage(errorMessage) {}
 
 // Static parse method implementation
-ErrorPacket ErrorPacket::parse(const char* buffer, size_t bufferSize) {
+ErrorPacket ErrorPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing error packet
     if (bufferSize < 5){
         throw std::runtime_error("Buffer too short for ERROR packet");
@@ -105,12 +275,8 @@ ErrorPacket ErrorPacket::parse(const char* buffer, size_t bufferSize) {
 
     uint16_t errorCode = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     std::string errorMessage = std::string(buffer + 4, buffer + bufferSize - 1);
+    std::cerr << "ERROR " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << errorCode << " " << errorMessage << std::endl;
     return ErrorPacket(errorCode, errorMessage);
-}
-
-void ErrorPacket::handlePacket() const {
-    std::cerr << "Received ERROR packet with error code: " << errorCode 
-              << " and error message: " << errorMessage << std::endl;
 }
 
 // Serialize method for TFTPErrorPacket
@@ -123,4 +289,12 @@ std::vector<char> ErrorPacket::serialize() const {
     buffer.insert(buffer.end(), errorMessage.begin(), errorMessage.end());
     buffer.push_back('\0');
     return buffer;
+}
+
+void ErrorPacket::handleClient(ClientSession& session) const {
+    std::cout << "Error packet" << std::endl;
+}
+
+void ErrorPacket::handleServer(ServerSession& session) const {
+    std::cout << "Error packet" << std::endl;
 }

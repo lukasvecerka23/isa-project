@@ -13,6 +13,7 @@ public:
 private:
     std::string hostname;
     int port;
+    int sockfd;
 };
 
 #endif 
