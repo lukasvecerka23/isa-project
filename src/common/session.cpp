@@ -43,10 +43,26 @@ void ClientSession::handleSession() {
     }
 }
 
+int ClientSession::readDataBlock(std::vector<char>& data) {
+    int bytesRead = read(STDIN_FILENO, data.data(), blockSize);
+    if (bytesRead < 0) {
+        throw std::runtime_error("Failed to read data from stdin");
+    }
+
+    data.resize(bytesRead);
+
+    return bytesRead;
+}
+
 ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {}
 
 void ServerSession::handleSession() {
+    std::cout << "Opening file on server: " << dst_filename << std::endl;
+    this->fileStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
+    if (!fileStream.is_open()) {
+        throw std::runtime_error("Failed to open file");
+    }
     char buffer[516];
     if (sessionType == SessionType::WRITE){
         ACKPacket ackPacket(0);
@@ -64,6 +80,12 @@ void ServerSession::handleSession() {
         std::unique_ptr<Packet> packet = Packet::parse(dst_addr, buffer, n);
 
         packet->handleServer(*this);
+
+        if (sessionState == SessionState::END){
+            std::cout << "Closing file" << std::endl;
+            fileStream.close();
+            break;
+        }
     }
 }
 

@@ -48,8 +48,8 @@ public:
 class DataPacket : public Packet {
 public:
     uint16_t blockNumber;
-    std::string data;
-    DataPacket(uint16_t blockNumber, const std::string& data);
+    std::vector<char> data;
+    DataPacket(uint16_t blockNumber, const std::vector<char>& data);
     std::vector<char> serialize() const override;
     static DataPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     uint16_t getOpcode() const override { return 3; } // DATA opcode

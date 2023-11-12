@@ -5,6 +5,7 @@
 #include <string>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <fstream>
 
 enum class DataMode {
     NETASCII,
@@ -44,12 +45,14 @@ class ClientSession : public Session {
 public:
     ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
     void handleSession() override;
+    int readDataBlock(std::vector<char>& data);
 };
 
 class ServerSession : public Session {
 public:
     ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
     void handleSession() override;
+    std::ofstream fileStream;
 };
 
 #endif 

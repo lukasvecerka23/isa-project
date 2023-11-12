@@ -52,13 +52,13 @@ void TFTPClient::upload(std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    WriteRequestPacket packet(dest_filepath, "netascii"); // Create an ACK packet with block number 0
+    WriteRequestPacket packet(dest_filepath, "octet"); // Create an ACK packet with block number 0
     packet.send(sockfd, server_addr);
 
 
     struct sockaddr_in from_addr;
 
-    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::NETASCII, SessionType::WRITE);
+    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE);
     session.handleSession();
 
     // Here you might want to wait for a response depending on your application's needs

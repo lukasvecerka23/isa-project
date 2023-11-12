@@ -38,6 +38,7 @@ int main(int argc, char* argv[]) {
     // It should be the last argument after the options
     if (optind < argc) {
         root_dirpath = argv[optind];
+        std::cout << "Root directory path: " << root_dirpath << std::endl;
     } else {
         std::cerr << "Usage: " << argv[0] << " [-p port] root_dirpath\n";
         return 1;

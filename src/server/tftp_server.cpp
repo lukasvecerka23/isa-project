@@ -2,6 +2,7 @@
 #include "server/tftp_server.hpp"
 #include "common/packets.hpp"
 #include "common/session.hpp"
+#include <sys/stat.h>
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
@@ -30,7 +31,7 @@ int bind_new_socket(){
 }
 
 TFTPServer::TFTPServer(int port, std::string rootDirPath)
-    : port(port), rootDirPath(std::move(rootDirPath)) {
+    : port(port), rootDirPath(rootDirPath) {
         // Create socket
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         if (sockfd < 0) {
@@ -47,6 +48,15 @@ TFTPServer::TFTPServer(int port, std::string rootDirPath)
         if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
             close(sockfd);
             throw std::runtime_error("Failed to bind socket to port");
+        }
+
+        struct stat st = {0};
+
+        if (stat(rootDirPath.c_str(), &st) == -1) {
+            // Directory does not exist, attempt to create it
+            if (mkdir(rootDirPath.c_str(), 0700) == -1) { // 0700 permissions - owner can read, write, and execute
+                std::cerr << "Failed to create directory: " << rootDirPath << std::endl;
+            }
         }
         std::cout << "Starting TFTP server on port " << port 
         << " with root directory: " << rootDirPath << std::endl;
