@@ -36,7 +36,6 @@ std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size
 
 void Packet::send(int socket, sockaddr_in dst_addr) const {
     std::vector<char> message = serialize();
-    std::cout << "data: " << message.data() << "size: " << message.size() <<  std::endl;
     ssize_t sentBytes = sendto(socket, message.data(), message.size(), 0, (struct sockaddr*)&dst_addr, sizeof(dst_addr));
 
     if (sentBytes < 0) {
@@ -154,7 +153,53 @@ std::vector<char> DataPacket::serialize() const {
 }
 
 void DataPacket::handleClient(ClientSession& session) const {
-    std::cout << "Data packet" << std::endl;
+    switch(session.sessionState){
+        case SessionState::INITIAL:
+        {
+            session.srcTID = ntohs(session.dst_addr.sin_port);
+            if (session.blockNumber != this->blockNumber){
+                break;
+            }
+            session.writeStream.write(data.data(), data.size());
+            if (!session.writeStream.good()) {
+                throw std::runtime_error("Failed to write data to file");
+                break;
+            }
+            if (data.size() < session.blockSize){
+                session.sessionState = SessionState::RRQ_END;
+                break;
+            }
+            ACKPacket ackPacket(session.blockNumber);
+            ackPacket.send(session.sessionSockfd, session.dst_addr);
+            session.blockNumber++;
+            session.sessionState = SessionState::WAITING_DATA;
+            break;
+        }
+        case SessionState::WAITING_DATA:
+        {
+            if (session.blockNumber == this->blockNumber){
+                session.writeStream.write(data.data(), data.size());
+                if (!session.writeStream.good()) {
+                    throw std::runtime_error("Failed to write data to file");
+                    break;
+                }
+                if (data.size() < session.blockSize){
+                    session.writeStream.close();
+                    session.sessionState = SessionState::RRQ_END;
+                }
+                ACKPacket ackPacket(session.blockNumber);
+                ackPacket.send(session.sessionSockfd, session.dst_addr);
+                session.blockNumber++;
+            }
+            break;
+        }
+        default:
+        {
+            std::cout << "Bad state" << std::endl;
+            break;
+        }
+    
+    }
 }
 
 void DataPacket::handleServer(ServerSession& session) const {
@@ -162,16 +207,14 @@ void DataPacket::handleServer(ServerSession& session) const {
         case SessionState::WAITING_DATA:
         {
             if (session.blockNumber == this->blockNumber){
-                session.fileStream.write(data.data(), data.size());
-                if (!session.fileStream.good()) {
+                session.writeStream.write(data.data(), data.size());
+                if (!session.writeStream.good()) {
                     throw std::runtime_error("Failed to write data to file");
                     break;
                 }
-                std::cout << "Wrote " << data.data() << " to file" << std::endl;
-
                 if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::END;
-                    break;
+                    session.writeStream.close();
+                    session.sessionState = SessionState::WRQ_END;
                 }
                 ACKPacket ackPacket(session.blockNumber);
                 ackPacket.send(session.sessionSockfd, session.dst_addr);
@@ -223,14 +266,12 @@ void ACKPacket::handleClient(ClientSession& session) const {
         case SessionState::INITIAL:
         {
             session.srcTID = ntohs(session.dst_addr.sin_port);
-            std::cout << "srcTID: " << session.srcTID << std::endl;
             session.blockNumber = 1;
-            std::vector<char> data(session.blockSize);
-            int bytesRead = session.readDataBlock(data);
+            std::vector<char> data = session.readDataBlock();
             DataPacket dataPacket(session.blockNumber, data);
             dataPacket.send(session.sessionSockfd, session.dst_addr);
-            if (bytesRead < session.blockSize){
-                session.sessionState = SessionState::END;
+            if (data.size() < session.blockSize){
+                session.sessionState = SessionState::WAITING_LAST_ACK;
                 break;
             }
             session.sessionState = SessionState::WAITING_ACK;
@@ -240,19 +281,22 @@ void ACKPacket::handleClient(ClientSession& session) const {
         {
             if (session.blockNumber == this->blockNumber){
                 session.blockNumber++;
-                std::vector<char> data(session.blockSize);
-                int bytesRead = session.readDataBlock(data);
+                std::vector<char> data = session.readDataBlock();
                 DataPacket dataPacket(session.blockNumber, data);
                 dataPacket.send(session.sessionSockfd, session.dst_addr);
-                if (bytesRead < session.blockSize){
-                    session.sessionState = SessionState::END;
+                if (data.size() < session.blockSize){
+                    session.sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
             }
             break;
         }
-        case SessionState::END:
+        case SessionState::WAITING_LAST_ACK:
         {
+            if (session.blockNumber == this->blockNumber){
+                std::cout << "File transfer complete" << std::endl;
+                session.sessionState = SessionState::WRQ_END;
+            }
             break;
         }
         default:
@@ -264,7 +308,35 @@ void ACKPacket::handleClient(ClientSession& session) const {
 }
 
 void ACKPacket::handleServer(ServerSession& session) const {
-    std::cout << "Ack packet" << std::endl;
+    switch(session.sessionState){
+        case SessionState::WAITING_ACK:
+        {
+            if (session.blockNumber == this->blockNumber){
+                session.blockNumber++;
+                std::vector<char> data = session.readDataBlock();
+                DataPacket dataPacket(session.blockNumber, data);
+                dataPacket.send(session.sessionSockfd, session.dst_addr);
+                if (data.size() < session.blockSize){
+                    session.sessionState = SessionState::RRQ_END;
+                    break;
+                }
+            }
+            break;
+        }
+        case SessionState::RRQ_END:
+        {
+            if (session.blockNumber == this->blockNumber){
+                std::cout << "File transfer complete" << std::endl;
+                session.readStream.close();
+            }
+            break;
+        }
+        default:
+        {
+            std::cout << "Bad state" << std::endl;
+            break;
+        }
+    }
 }
 
 

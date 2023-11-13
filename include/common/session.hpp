@@ -20,8 +20,10 @@ enum class SessionType {
 enum class SessionState {
     INITIAL,
     WAITING_ACK,
+    WAITING_LAST_ACK,
     WAITING_DATA,
-    END
+    WRQ_END,
+    RRQ_END
 };
 
 class Session {
@@ -45,14 +47,17 @@ class ClientSession : public Session {
 public:
     ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
     void handleSession() override;
-    int readDataBlock(std::vector<char>& data);
+    std::vector<char> readDataBlock();
+    std::ofstream writeStream;
 };
 
 class ServerSession : public Session {
 public:
     ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
     void handleSession() override;
-    std::ofstream fileStream;
+    std::vector<char> readDataBlock();
+    std::ofstream writeStream;
+    std::ifstream readStream;
 };
 
 #endif 

@@ -26,6 +26,15 @@ ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std:
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {}
 
 void ClientSession::handleSession() {
+    if (sessionType == SessionType::READ){
+        std::cout << "Opening file on server: " << dst_filename << std::endl;
+        this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
+        if (!writeStream.is_open()) {
+            throw std::runtime_error("Failed to open file");
+        }
+        blockNumber = 1;
+        sessionState = SessionState::INITIAL;
+    }
     char buffer[516];
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
@@ -37,38 +46,51 @@ void ClientSession::handleSession() {
         std::unique_ptr<Packet> packet = Packet::parse(dst_addr, buffer, n);
 
         packet->handleClient(*this);
-        if (sessionState == SessionState::END){
+        if (sessionState == SessionState::RRQ_END || sessionState == SessionState::WRQ_END){
             break;
         }
     }
 }
 
-int ClientSession::readDataBlock(std::vector<char>& data) {
-    int bytesRead = read(STDIN_FILENO, data.data(), blockSize);
-    if (bytesRead < 0) {
+std::vector<char> ClientSession::readDataBlock() {
+    std::vector<char> data(blockSize);
+    std::cin.read(data.data(), blockSize);
+    ssize_t bytesRead = std::cin.gcount();
+    if (bytesRead <= 0) {
         throw std::runtime_error("Failed to read data from stdin");
     }
 
     data.resize(bytesRead);
 
-    return bytesRead;
+    return data;
 }
 
 ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {}
 
 void ServerSession::handleSession() {
-    std::cout << "Opening file on server: " << dst_filename << std::endl;
-    this->fileStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
-    if (!fileStream.is_open()) {
-        throw std::runtime_error("Failed to open file");
-    }
+
     char buffer[516];
     if (sessionType == SessionType::WRITE){
+        std::cout << "Opening file on server: " << dst_filename << std::endl;
+        this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
+        if (!writeStream.is_open()) {
+            throw std::runtime_error("Failed to open file");
+        }
         ACKPacket ackPacket(0);
         ackPacket.send(sessionSockfd, dst_addr);
         blockNumber = 1;
         sessionState = SessionState::WAITING_DATA;
+    } else if (sessionType == SessionType::READ){
+        std::cout << "Opening file on server: " << src_filename << std::endl;
+        this->readStream.open(src_filename, std::ios::binary | std::ios::in);
+        if (!readStream.is_open()) {
+            throw std::runtime_error("Failed to open file");
+        }
+        DataPacket dataPacket(1, readDataBlock());
+        dataPacket.send(sessionSockfd, dst_addr);
+        blockNumber++;
+        sessionState = SessionState::WAITING_ACK;
     }
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
@@ -80,13 +102,23 @@ void ServerSession::handleSession() {
         std::unique_ptr<Packet> packet = Packet::parse(dst_addr, buffer, n);
 
         packet->handleServer(*this);
-
-        if (sessionState == SessionState::END){
-            std::cout << "Closing file" << std::endl;
-            fileStream.close();
+        if (sessionState == SessionState::WRQ_END || sessionState == SessionState::RRQ_END){
             break;
         }
     }
+}
+
+std::vector<char> ServerSession::readDataBlock() {
+    std::vector<char> data(blockSize);
+    readStream.read(data.data(), blockSize);
+    ssize_t bytesRead = readStream.gcount();
+    if (bytesRead <= 0) {
+        throw std::runtime_error("Failed to read data from file");
+    }
+
+    data.resize(bytesRead);
+
+    return data;
 }
 
 
