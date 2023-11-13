@@ -317,17 +317,18 @@ void ACKPacket::handleServer(ServerSession& session) const {
                 DataPacket dataPacket(session.blockNumber, data);
                 dataPacket.send(session.sessionSockfd, session.dst_addr);
                 if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::RRQ_END;
+                    session.sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
             }
             break;
         }
-        case SessionState::RRQ_END:
+        case SessionState::WAITING_LAST_ACK:
         {
             if (session.blockNumber == this->blockNumber){
                 std::cout << "File transfer complete" << std::endl;
                 session.readStream.close();
+                session.sessionState = SessionState::RRQ_END;
             }
             break;
         }
