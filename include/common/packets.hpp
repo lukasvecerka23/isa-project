@@ -2,6 +2,8 @@
 #define PACKETS_HPP
 
 #include <vector>
+#include <map>
+#include <set>
 #include <string>
 #include <netinet/in.h>
 #include "common/session.hpp"
@@ -23,13 +25,15 @@ class RequestPacket : public Packet {
 public:
     std::string filename;
     std::string mode;
-    RequestPacket(const std::string& filename, const std::string& mode);
+    std::map<std::string, int> options;
+    static const std::set<std::string> supportedOptions;
+    RequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
     std::vector<char> serialize() const override;
 };
 
 class ReadRequestPacket : public RequestPacket {
 public:
-    ReadRequestPacket(const std::string& filename, const std::string& mode);
+    ReadRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
     static ReadRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;
@@ -38,7 +42,7 @@ public:
 
 class WriteRequestPacket : public RequestPacket {
 public:
-    WriteRequestPacket(const std::string& filename, const std::string& mode);
+    WriteRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
     static WriteRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;
@@ -76,6 +80,17 @@ public:
     std::vector<char> serialize() const override;
     static ErrorPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     uint16_t getOpcode() const override { return 5; } // ERROR opcode
+    void handleClient(ClientSession& session) const override;
+    void handleServer(ServerSession& session) const override;
+};
+
+class OACKPacket : public Packet {
+public:
+    std::map<std::string, int> options;
+    OACKPacket(std::map<std::string, int> options);
+    std::vector<char> serialize() const override;
+    static OACKPacket parse(sockaddr_in addr, const char* buffer, size_t size);
+    uint16_t getOpcode() const override { return 6; } // OACK opcode
     void handleClient(ClientSession& session) const override;
     void handleServer(ServerSession& session) const override;
 };

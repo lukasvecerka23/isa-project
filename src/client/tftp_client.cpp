@@ -52,13 +52,18 @@ void TFTPClient::upload(std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    WriteRequestPacket packet(dest_filepath, "octet"); // Create an ACK packet with block number 0
+    std::map<std::string, int> options;
+    options["timeout"] = 30;
+    options["blksize"] = 1024;
+    options["tsizeaada"] = 5000;
+
+    WriteRequestPacket packet(dest_filepath, "octet", options); // Create an ACK packet with block number 0
     packet.send(sockfd, server_addr);
 
 
     struct sockaddr_in from_addr;
 
-    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE);
+    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE, options);
     session.handleSession();
 
     // Here you might want to wait for a response depending on your application's needs
@@ -89,12 +94,17 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
         struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
         server_addr.sin_port = htons(port);
 
-        ReadRequestPacket packet(filepath, "octet"); // Create an ACK packet with block number 0
+        std::map<std::string, int> options;
+        options["blksize"] = 1024;
+        options["timeout"] = 30;
+        options["tsize"] = 5000;
+
+        ReadRequestPacket packet(filepath, "octet", options);
         packet.send(sockfd, server_addr);
 
         struct sockaddr_in from_addr;
 
-        ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ);
+        ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
         session.handleSession();
 
         // Here you might want to wait for a response depending on your application's needs

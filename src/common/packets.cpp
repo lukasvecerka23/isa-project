@@ -29,6 +29,8 @@ std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size
             return std::make_unique<ACKPacket>(ACKPacket::parse(addr, buffer, bufferSize));
         case 5: // ERROR
             return std::make_unique<ErrorPacket>(ErrorPacket::parse(addr, buffer, bufferSize));
+        case 6: // OACK
+            return std::make_unique<OACKPacket>(OACKPacket::parse(addr, buffer, bufferSize));
         default:
             throw std::runtime_error("Unknown or unhandled TFTP opcode");
     }
@@ -47,8 +49,10 @@ void Packet::send(int socket, sockaddr_in dst_addr) const {
 
 // REQUEST PACKET
 // Constructor for TFTPRequestPacket
-RequestPacket::RequestPacket(const std::string& filename, const std::string& mode)
-    : filename(filename), mode(mode) {}
+RequestPacket::RequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options)
+    : filename(filename), mode(mode), options(options) {}
+
+const std::set<std::string> RequestPacket::supportedOptions = {"blksize", "timeout", "tsize"};
 
 // Serialize method for TFTPRequestPacket
 std::vector<char> RequestPacket::serialize() const {
@@ -60,27 +64,62 @@ std::vector<char> RequestPacket::serialize() const {
     buffer.push_back('\0');
     buffer.insert(buffer.end(), mode.begin(), mode.end());
     buffer.push_back('\0');
+
+        // Add options
+    for (const auto& option : options) {
+        buffer.insert(buffer.end(), option.first.begin(), option.first.end());
+        buffer.push_back('\0');
+        std::string optionValue = std::to_string(option.second);
+        buffer.insert(buffer.end(), optionValue.begin(), optionValue.end());
+        buffer.push_back('\0');
+    }
+
     return buffer;
 }
 
 // WRITE REQUEST PACKET
 // Constructor
-WriteRequestPacket::WriteRequestPacket(const std::string& filename, const std::string& mode)
-    : RequestPacket(filename, mode) {}
+WriteRequestPacket::WriteRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options)
+    : RequestPacket(filename, mode, options) {}
 
 WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing write request packet
-    std::cout << bufferSize << std::endl;
     if (bufferSize < 4){
         throw std::runtime_error("Buffer too short for WRQ packet");
     }
+    const char* current = buffer + 2;
+    const char* filenameEnd = std::find(current, buffer + bufferSize, '\0');
 
-    const char* filenameEnd = std::find(buffer + 2, buffer + bufferSize, '\0');
+    std::string filename = std::string(current, filenameEnd);
+    current = filenameEnd + 1;
 
-    std::string filename = std::string(buffer + 2, filenameEnd);
-    std::string mode = std::string(buffer + 2 + filename.size() + 1, buffer + bufferSize - 1);
-    std::cerr << "WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << mode << std::endl;
-    return WriteRequestPacket(filename, mode);
+    const char* modeEnd = std::find(current, buffer + bufferSize, '\0');
+    std::string mode = std::string(current, modeEnd);
+
+    current = modeEnd + 1;
+
+    std::map<std::string, int> options;
+    std::string optMessage = "";
+    while (current < buffer + bufferSize) {
+        const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionName(current, optionEnd);
+        current = optionEnd + 1;
+
+        const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionValueStr(current, valueEnd);
+        current = valueEnd + 1;
+
+        int optionValue = std::stoi(optionValueStr);
+        optMessage += optionName + "=" + optionValueStr;
+
+        if (supportedOptions.find(optionName) == supportedOptions.end()) {
+            continue;
+        }
+        options[optionName] = optionValue;
+        
+    }
+    std::cerr << "WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << mode << " " << optMessage << std::endl;
+    return WriteRequestPacket(filename, mode, options);
 }
 
 void WriteRequestPacket::handleClient(ClientSession& session) const {
@@ -93,8 +132,8 @@ void WriteRequestPacket::handleServer(ServerSession& session) const {
 
 // READ REQUEST PACKET
 // Constructor
-ReadRequestPacket::ReadRequestPacket(const std::string& filename, const std::string& mode)
-    : RequestPacket(filename, mode) {}
+ReadRequestPacket::ReadRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options)
+    : RequestPacket(filename, mode, options) {}
 
 ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing read request packet
@@ -102,12 +141,34 @@ ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer,
         throw std::runtime_error("Buffer too short for RRQ packet");
     }
 
-    const char* filenameEnd = std::find(buffer + 2, buffer + bufferSize, '\0');
+    const char* current = buffer + 2;
+    const char* filenameEnd = std::find(current, buffer + bufferSize, '\0');
 
-    std::string filename = std::string(buffer + 2, filenameEnd);
-    std::string mode = std::string(buffer + 2 + filename.size() + 1, buffer + bufferSize - 1);
+    std::string filename = std::string(current, filenameEnd);
+    current = filenameEnd + 1;
+
+    const char* modeEnd = std::find(current, buffer + bufferSize, '\0');
+    std::string mode = std::string(current, modeEnd);
+
+    current = modeEnd + 1;
+
+    std::map<std::string, int> options;
+    while (current < buffer + bufferSize) {
+        const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionName(current, optionEnd);
+        current = optionEnd + 1;
+
+        const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionValueStr(current, valueEnd);
+        current = valueEnd + 1;
+
+        int optionValue = std::stoi(optionValueStr);
+        options[optionName] = optionValue;
+        std::cerr << optionName << "=" << optionValue << std::endl;
+    }
+
     std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << mode << std::endl;
-    return ReadRequestPacket(filename, mode);
+    return ReadRequestPacket(filename, mode, options);
 }
 
 void ReadRequestPacket::handleClient(ClientSession& session) const {
@@ -190,6 +251,25 @@ void DataPacket::handleClient(ClientSession& session) const {
                 ACKPacket ackPacket(session.blockNumber);
                 ackPacket.send(session.sessionSockfd, session.dst_addr);
                 session.blockNumber++;
+            }
+            break;
+        }
+        case SessionState::WAITING_OACK:
+        {
+            if (session.blockNumber == this->blockNumber){
+                session.writeStream.write(data.data(), data.size());
+                if (!session.writeStream.good()) {
+                    throw std::runtime_error("Failed to write data to file");
+                    break;
+                }
+                if (data.size() < session.blockSize){
+                    session.sessionState = SessionState::RRQ_END;
+                    break;
+                }
+                ACKPacket ackPacket(session.blockNumber);
+                ackPacket.send(session.sessionSockfd, session.dst_addr);
+                session.blockNumber++;
+                session.sessionState = SessionState::WAITING_DATA;
             }
             break;
         }
@@ -299,6 +379,21 @@ void ACKPacket::handleClient(ClientSession& session) const {
             }
             break;
         }
+        case SessionState::WAITING_OACK:
+        {
+            if (session.blockNumber == this->blockNumber){
+                session.blockNumber++;
+                std::vector<char> data = session.readDataBlock();
+                DataPacket dataPacket(session.blockNumber, data);
+                dataPacket.send(session.sessionSockfd, session.dst_addr);
+                if (data.size() < session.blockSize){
+                    session.sessionState = SessionState::WAITING_LAST_ACK;
+                    break;
+                }
+                session.sessionState = SessionState::WAITING_ACK;
+            }
+            break;
+        }
         default:
         {
             std::cout << "Bad state" << std::endl;
@@ -382,4 +477,96 @@ void ErrorPacket::handleClient(ClientSession& session) const {
 
 void ErrorPacket::handleServer(ServerSession& session) const {
     std::cout << "Error packet" << std::endl;
+}
+
+OACKPacket::OACKPacket(std::map<std::string, int> options)
+    : options(options) {}
+
+
+
+std::vector<char> OACKPacket::serialize() const {
+    std::vector<char> buffer;
+    buffer.push_back(0);
+    buffer.push_back(6); // Opcode for OACK
+    for (const auto& option : options) {
+        buffer.insert(buffer.end(), option.first.begin(), option.first.end());
+        buffer.push_back('\0');
+        std::string optionValue = std::to_string(option.second);
+        buffer.insert(buffer.end(), optionValue.begin(), optionValue.end());
+        buffer.push_back('\0');
+    }
+    return buffer;
+}
+
+OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
+    // parsing OACK packet
+    if (bufferSize < 4){
+        throw std::runtime_error("Buffer too short for OACK packet");
+    }
+
+    uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
+    if (opcode != 6) { // 4 is the opcode for ACK
+        throw std::runtime_error("Invalid opcode for ACK packet");
+    }
+
+    const char* current = buffer + 2;
+    std::map<std::string, int> options;
+    std::string optMessage = "";
+    while (current < buffer + bufferSize) {
+        const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionName(current, optionEnd);
+        current = optionEnd + 1;
+
+        const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
+        std::string optionValueStr(current, valueEnd);
+        current = valueEnd + 1;
+
+        int optionValue = std::stoi(optionValueStr);
+        optMessage += optionName + "=" + optionValueStr;
+
+        if (RequestPacket::supportedOptions.find(optionName) == RequestPacket::supportedOptions.end()) {
+            continue;
+        }
+        options[optionName] = optionValue;
+        
+    }
+    std::cerr << "OACK " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << optMessage << std::endl;
+    return OACKPacket(options);
+}
+
+void OACKPacket::handleClient(ClientSession& session) const {
+    if (session.sessionState == SessionState::WAITING_OACK){
+        for (const auto& option : options) {
+            if (session.options.find(option.first) == session.options.end()) {
+                throw std::runtime_error("Invalid options: " + option.first + " was not requested by client");
+            }
+        }
+        session.setOptions(options);
+        switch(session.sessionType){
+            case SessionType::READ:
+            {
+                ACKPacket ackPacket(0);
+                ackPacket.send(session.sessionSockfd, session.dst_addr);
+                session.sessionState = SessionState::WAITING_DATA;
+                break;
+            }
+            case SessionType::WRITE:
+            {
+                session.blockNumber++;
+                std::vector<char> data = session.readDataBlock();
+                DataPacket dataPacket(session.blockNumber, data);
+                dataPacket.send(session.sessionSockfd, session.dst_addr);
+                if (data.size() < session.blockSize){
+                    session.sessionState = SessionState::WAITING_LAST_ACK;
+                    break;
+                }
+                session.sessionState = SessionState::WAITING_ACK;
+                break;
+            }
+        }
+    }
+}
+
+void OACKPacket::handleServer(ServerSession& session) const {
+    std::cout << "OACK packet" << std::endl;
 }

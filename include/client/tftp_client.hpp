@@ -1,6 +1,7 @@
 // tftp_server.hpp
 #ifndef TFTPCLIENT_HPP
 #define TFTPCLIENT_HPP
+#define BUFFER_SIZE 65507
 
 #include <string>
 

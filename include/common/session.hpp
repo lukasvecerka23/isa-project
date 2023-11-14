@@ -1,11 +1,13 @@
 // tftp_server.hpp
 #ifndef SESSION_HPP
 #define SESSION_HPP
+#define BUFFER_SIZE 65507
 
 #include <string>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <fstream>
+#include <map>
 
 enum class DataMode {
     NETASCII,
@@ -19,6 +21,7 @@ enum class SessionType {
 
 enum class SessionState {
     INITIAL,
+    WAITING_OACK,
     WAITING_ACK,
     WAITING_LAST_ACK,
     WAITING_DATA,
@@ -36,28 +39,33 @@ public:
     int sessionSockfd;
     int blockNumber;
     int blockSize;
+    int timeout;
+    int tsize;
     DataMode dataMode;
     SessionType sessionType;
     std::string src_filename;
     std::string dst_filename;
     SessionState sessionState;
+    std::map<std::string, int> options;
 };
 
 class ClientSession : public Session {
 public:
-    ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
+    ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options);
     void handleSession() override;
     std::vector<char> readDataBlock();
+    void setOptions(std::map<std::string, int> options);
     std::ofstream writeStream;
 };
 
 class ServerSession : public Session {
 public:
-    ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
+    ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType,  std::map<std::string, int> options);
     void handleSession() override;
     std::vector<char> readDataBlock();
     std::ofstream writeStream;
     std::ifstream readStream;
+    
 };
 
 #endif 

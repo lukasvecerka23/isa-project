@@ -69,7 +69,7 @@ void TFTPServer::start() {
     while (true) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
-        char buffer[2048]; // A buffer to store incoming data
+        char buffer[BUFFER_SIZE];
         // Receive initial request from a clients
         ssize_t received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0,
                                           (struct sockaddr *)&client_addr, &client_len);
@@ -98,7 +98,7 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             {
                 int sockfd = bind_new_socket();
                 ReadRequestPacket* readPacket = dynamic_cast<ReadRequestPacket*>(packet.get());
-                ServerSession readSession(sockfd, clientAddr, rootDirPath + "/" + readPacket->filename, "", readPacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::READ);
+                ServerSession readSession(sockfd, clientAddr, rootDirPath + "/" + readPacket->filename, "", readPacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::READ, readPacket->options);
                 readSession.handleSession();
                 break;
             }
@@ -106,7 +106,7 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             {
                 int sockfd = bind_new_socket();
                 WriteRequestPacket* writePacket = dynamic_cast<WriteRequestPacket*>(packet.get());
-                ServerSession writeSession(sockfd, clientAddr, "", rootDirPath + "/" + writePacket->filename, writePacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::WRITE);
+                ServerSession writeSession(sockfd, clientAddr, "", rootDirPath + "/" + writePacket->filename, writePacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::WRITE, writePacket->options);
                 writeSession.handleSession();
                 break;
             }
