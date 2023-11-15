@@ -5,6 +5,26 @@
 #include <vector>
 #include <unistd.h>
 
+std::string modeToString(DataMode value) {
+    switch (value) {
+        case DataMode::NETASCII: return "netascii";
+        case DataMode::OCTET: return "octet";
+        default: return "unknown";
+    }
+}
+
+DataMode stringToMode(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+
+    if (value == "netascii") {
+        return DataMode::NETASCII;
+    } else if (value == "octet") {
+        return DataMode::OCTET;
+    } else {
+        throw std::runtime_error("Invalid mode");
+    }
+}
+
 Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType) {
     this->dst_addr = dst_addr;
     this->srcTID = ntohs(dst_addr.sin_port);
@@ -57,18 +77,68 @@ void ClientSession::handleSession() {
 }
 
 std::vector<char> ClientSession::readDataBlock() {
-    
-    std::vector<char> data(blockSize);
-    std::cin.read(data.data(), blockSize);
-    ssize_t bytesRead = std::cin.gcount();
-    
-    if (bytesRead <= 0) {
-        throw std::runtime_error("Failed to read data from stdin");
+    std::vector<char> data;
+    switch (dataMode) {
+        case DataMode::NETASCII:
+            {
+                char ch;
+                while(std::cin.get(ch) && data.size() ){
+                    if (ch == '\n'){
+                        data.push_back('\r');
+                        if (data.size() < blockSize){
+                            data.push_back('\n');
+                        }
+                    } else if (ch == '\r'){
+                        data.push_back('\r');
+                        if (data.size() < blockSize){
+                            data.push_back('\0');
+                        }
+                    } else {
+                        data.push_back(ch);
+                    }
+                    break;
+                }
+            }
+        case DataMode::OCTET:
+            data.resize(blockSize);
+            std::cin.read(data.data(), blockSize);
+            ssize_t bytesRead = std::cin.gcount();
+            
+            if (bytesRead <= 0) {
+                throw std::runtime_error("Failed to read data from stdin");
+            }
+
+            data.resize(bytesRead);
+            break;
     }
 
-    data.resize(bytesRead);
-
+    if (data.empty()){
+        throw std::runtime_error("Failed to read data from stdin");
+    }
     return data;
+}
+
+void Session::writeDataBlock(std::vector<char> data) {
+    switch (dataMode) {
+        case DataMode::NETASCII:
+            {
+                auto [convertedData, _ ] = parseNetasciiString(data.data(), data.data(), data.data() + data.size());
+
+                writeStream.write(convertedData.data(), convertedData.size());
+                if (writeStream.fail()) {
+                    throw std::runtime_error("Failed to write data to file");
+                }
+            }
+            break;
+        case DataMode::OCTET:
+            {
+                writeStream.write(data.data(), data.size());
+                if (writeStream.fail()) {
+                    throw std::runtime_error("Failed to write data to file");
+                }
+            }
+            break;
+    }
 }
 
 void ClientSession::setOptions(std::map<std::string, int> newOptions){
@@ -133,11 +203,13 @@ void ServerSession::handleSession() {
         }
 
         if(options.empty()){
+            std::cout << "Sending ACK packet with block number 0" << std::endl;
             ACKPacket ackPacket(0);
             ackPacket.send(sessionSockfd, dst_addr);
             blockNumber = 1;
             sessionState = SessionState::WAITING_DATA;
         } else {
+            std::cout << "Sending OACK packet" << std::endl;
             OACKPacket oackPacket(options);
             oackPacket.send(sessionSockfd, dst_addr);
             blockNumber = 1;

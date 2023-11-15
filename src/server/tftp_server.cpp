@@ -98,7 +98,7 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             {
                 int sockfd = bind_new_socket();
                 ReadRequestPacket* readPacket = dynamic_cast<ReadRequestPacket*>(packet.get());
-                ServerSession readSession(sockfd, clientAddr, rootDirPath + "/" + readPacket->filename, "", readPacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::READ, readPacket->options);
+                ServerSession readSession(sockfd, clientAddr, rootDirPath + "/" + readPacket->filename, "", readPacket->mode, SessionType::READ, readPacket->options);
                 readSession.handleSession();
                 break;
             }
@@ -106,7 +106,7 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             {
                 int sockfd = bind_new_socket();
                 WriteRequestPacket* writePacket = dynamic_cast<WriteRequestPacket*>(packet.get());
-                ServerSession writeSession(sockfd, clientAddr, "", rootDirPath + "/" + writePacket->filename, writePacket->mode == "netascii" ? DataMode::NETASCII : DataMode::OCTET, SessionType::WRITE, writePacket->options);
+                ServerSession writeSession(sockfd, clientAddr, "", rootDirPath + "/" + writePacket->filename, writePacket->mode, SessionType::WRITE, writePacket->options);
                 writeSession.handleSession();
                 break;
             }

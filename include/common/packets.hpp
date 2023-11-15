@@ -8,6 +8,9 @@
 #include <netinet/in.h>
 #include "common/session.hpp"
 
+std::string convertToNetascii(const std::string& str);
+std::pair<std::string, const char*> parseNetasciiString(const char* buffer, const char* start, const char* end);
+
 class Packet {
 public:
     virtual ~Packet() = default;
@@ -18,22 +21,22 @@ public:
     sockaddr_in addr;
     
     static std::unique_ptr<Packet> parse(sockaddr_in addr, const char* buffer, size_t bufferSize);
-    void send(int socket, sockaddr_in dst_addr) const;
+    void send(int socket, sockaddr_in dst_addr);
 };
 
 class RequestPacket : public Packet {
 public:
     std::string filename;
-    std::string mode;
+    DataMode mode;
     std::map<std::string, int> options;
     static const std::set<std::string> supportedOptions;
-    RequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
+    RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
     std::vector<char> serialize() const override;
 };
 
 class ReadRequestPacket : public RequestPacket {
 public:
-    ReadRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
+    ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
     static ReadRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;
@@ -42,7 +45,7 @@ public:
 
 class WriteRequestPacket : public RequestPacket {
 public:
-    WriteRequestPacket(const std::string& filename, const std::string& mode, std::map<std::string, int> options);
+    WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
     static WriteRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;

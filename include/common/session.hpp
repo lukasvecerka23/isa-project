@@ -14,6 +14,10 @@ enum class DataMode {
     OCTET
 };
 
+std::string modeToString(DataMode value);
+
+DataMode stringToMode(std::string value);
+
 enum class SessionType {
     READ,
     WRITE
@@ -46,7 +50,9 @@ public:
     std::string src_filename;
     std::string dst_filename;
     SessionState sessionState;
+    std::ofstream writeStream;
     std::map<std::string, int> options;
+    void writeDataBlock(std::vector<char> data);
 };
 
 class ClientSession : public Session {
@@ -55,7 +61,6 @@ public:
     void handleSession() override;
     std::vector<char> readDataBlock();
     void setOptions(std::map<std::string, int> options);
-    std::ofstream writeStream;
 };
 
 class ServerSession : public Session {
@@ -63,7 +68,6 @@ public:
     ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType,  std::map<std::string, int> options);
     void handleSession() override;
     std::vector<char> readDataBlock();
-    std::ofstream writeStream;
     std::ifstream readStream;
     
 };
