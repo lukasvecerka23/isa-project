@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/statvfs.h>
 
 
 bool checkOptions(std::map<std::string, uint64_t> options){
@@ -764,13 +765,33 @@ void OACKPacket::handleClient(ClientSession& session) const {
     if (session.sessionState == SessionState::WAITING_OACK){
         for (const auto& option : options) {
             if (session.options.find(option.first) == session.options.end()) {
-                throw std::runtime_error("Invalid options: " + option.first + " was not requested by client");
+                ErrorPacket errorPacket(8, "Unknown transfer option");
+                errorPacket.send(session.sessionSockfd, session.dst_addr);
+                session.sessionState = SessionState::ERROR;
             }
         }
         session.setOptions(options);
         switch(session.sessionType){
             case SessionType::READ:
             {
+                // if tsize option is set check if there is enough space on disk
+                if (options.find("tsize") != options.end()){
+                    struct statvfs stat;
+                    if (statvfs("/", &stat) != 0) {
+                        // Error occurred getting filesystem stats
+                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                        errorPacket.send(session.sessionSockfd, session.dst_addr);
+                        return;
+                    }
+
+                    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
+                    if (freeSpace < options.at("tsize")) {
+                        // Not enough disk space
+                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                        errorPacket.send(session.sessionSockfd, session.dst_addr);
+                        return;
+                    }
+                }
                 ACKPacket ackPacket(0);
                 ackPacket.send(session.sessionSockfd, session.dst_addr);
                 session.sessionState = SessionState::WAITING_DATA;

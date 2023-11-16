@@ -1,6 +1,7 @@
 #include "common/session.hpp"
 #include "common/packets.hpp"
 #include "common/exceptions.hpp"
+#include <sys/statvfs.h>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -240,6 +241,25 @@ void ServerSession::handleSession() {
             return;
         }
 
+        // If "tsize" is set, check if there is enough disk space
+        if (options.find("tsize") != options.end()) {
+            struct statvfs stat;
+            if (statvfs("/", &stat) != 0) {
+                // Error occurred getting filesystem stats
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                errorPacket.send(sessionSockfd, dst_addr);
+                return;
+            }
+
+            uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
+            if (freeSpace < options.at("tsize")) {
+                // Not enough disk space
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                errorPacket.send(sessionSockfd, dst_addr);
+                return;
+            }
+        }
+
         if(options.empty()){
             ACKPacket ackPacket(0);
             ackPacket.send(sessionSockfd, dst_addr);
@@ -260,6 +280,30 @@ void ServerSession::handleSession() {
             this->exit();
             return;
         }
+
+        // If "tsize" is set, check if there is enough disk space
+        if (options.find("tsize") != options.end()) {
+            struct statvfs stat;
+            if (statvfs("/", &stat) != 0) {
+                // Error occurred getting filesystem stats
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                errorPacket.send(sessionSockfd, dst_addr);
+                return;
+            }
+
+            uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
+            if (freeSpace < options.at("tsize")) {
+                // Not enough disk space
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                errorPacket.send(sessionSockfd, dst_addr);
+                return;
+            }
+
+            // Set the tsize to the actual file size
+            this->tsize = std::filesystem::file_size(src_filename);
+            options["tsize"] = tsize;
+        }
+
         if (options.empty()){
             std::vector<char> data;
             try {

@@ -3,6 +3,7 @@
 #include "common/packets.hpp"
 #include "common/session.hpp"
 #include <iostream>
+#include <sstream>
 #include <cstring>
 #include <cstdlib>
 #include <sys/socket.h>
@@ -55,6 +56,14 @@ void TFTPClient::upload(std::string dest_filepath) {
     std::map<std::string, uint64_t> options;
     options["blksize"] = 2048;
 
+    std::ostringstream ss;
+    ss << std::cin.rdbuf();
+    std::string stdinData = ss.str();
+    options["tsize"] = stdinData.size();
+
+    std::istringstream iss(stdinData);
+    std::cin.rdbuf(iss.rdbuf());
+
     WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options); // Create an ACK packet with block number 0
     packet.send(sockfd, server_addr);
 
@@ -88,9 +97,10 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksizeadad"] = 1024;
+    options["blksize"] = 5000;
+    options["tsize"] = 0; // 0 means we don't know the size of the file yet
 
-    ReadRequestPacket packet(filepath, DataMode::NETASCII, options);
+    ReadRequestPacket packet(filepath, DataMode::OCTET, options);
     packet.send(sockfd, server_addr);
 
     struct sockaddr_in from_addr;
