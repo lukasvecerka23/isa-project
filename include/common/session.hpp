@@ -2,6 +2,12 @@
 #ifndef SESSION_HPP
 #define SESSION_HPP
 #define BUFFER_SIZE 65507
+#define MAX_BLOCK_SIZE 65464
+#define MAX_TIMEOUT 255
+#define MAX_TSIZE 4294967295
+#define MIN_BLOCK_SIZE 8
+#define MIN_TIMEOUT 1
+#define MIN_TSIZE 0
 
 #include <string>
 #include <netinet/in.h>
@@ -41,33 +47,33 @@ public:
     sockaddr_in dst_addr;
     int srcTID;
     int sessionSockfd;
-    int blockNumber;
-    int blockSize;
+    uint16_t blockNumber;
+    uint16_t blockSize;
     int timeout;
-    int tsize;
+    uint64_t tsize;
     DataMode dataMode;
     SessionType sessionType;
     std::string src_filename;
     std::string dst_filename;
     SessionState sessionState;
     std::ofstream writeStream;
-    std::map<std::string, int> options;
+    std::map<std::string, uint64_t> options;
     void writeDataBlock(std::vector<char> data);
 };
 
 class ClientSession : public Session {
 public:
-    ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options);
+    ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options);
     void handleSession() override;
     std::vector<char> readDataBlock();
-    void setOptions(std::map<std::string, int> options);
+    void setOptions(std::map<std::string, uint64_t> options);
     bool TIDisSet;
     void exit();
 };
 
 class ServerSession : public Session {
 public:
-    ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType,  std::map<std::string, int> options);
+    ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType,  std::map<std::string, uint64_t> options);
     void handleSession() override;
     std::vector<char> readDataBlock();
     std::ifstream readStream;

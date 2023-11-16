@@ -2,6 +2,7 @@
 #include "server/tftp_server.hpp"
 #include "common/packets.hpp"
 #include "common/session.hpp"
+#include "common/exceptions.hpp"
 #include <sys/stat.h>
 #include <filesystem>
 #include <iostream>
@@ -29,7 +30,6 @@ int bind_new_socket(){
         throw std::runtime_error("Failed to bind socket to port");
     }
 
-    std::cout << "New socket bound to port " << ntohs(server_addr.sin_port) << std::endl;
     return sockfd;
 }
 
@@ -96,8 +96,18 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
     try {
         packet = Packet::parse(clientAddr, buffer, bufferSize);
     }
+    catch (const ParsingError& e) {
+        ErrorPacket errorPacket(ParsingError::errorCode, e.what());
+        errorPacket.send(sockfd, clientAddr);
+        return;
+    }
+    catch (const OptionError& e) {
+        ErrorPacket errorPacket(OptionError::errorCode, e.what());
+        errorPacket.send(sockfd, clientAddr);
+        return;
+    }
     catch (const std::exception& e) {
-        ErrorPacket errorPacket(4, "Invalid TFTP operation");
+        ErrorPacket errorPacket(0, e.what());
         errorPacket.send(sockfd, clientAddr);
         return;
     }

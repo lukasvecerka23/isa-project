@@ -27,15 +27,15 @@ class RequestPacket : public Packet {
 public:
     std::string filename;
     DataMode mode;
-    std::map<std::string, int> options;
+    std::map<std::string, uint64_t> options;
     static const std::set<std::string> supportedOptions;
-    RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
+    RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options);
     std::vector<char> serialize() const override;
 };
 
 class ReadRequestPacket : public RequestPacket {
 public:
-    ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
+    ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options);
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
     static ReadRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;
@@ -44,7 +44,7 @@ public:
 
 class WriteRequestPacket : public RequestPacket {
 public:
-    WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options);
+    WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options);
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
     static WriteRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession& session) const override;
@@ -88,8 +88,8 @@ public:
 
 class OACKPacket : public Packet {
 public:
-    std::map<std::string, int> options;
-    OACKPacket(std::map<std::string, int> options);
+    std::map<std::string, uint64_t> options;
+    OACKPacket(std::map<std::string, uint64_t> options);
     std::vector<char> serialize() const override;
     static OACKPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     uint16_t getOpcode() const override { return 6; } // OACK opcode

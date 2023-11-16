@@ -52,7 +52,7 @@ void TFTPClient::upload(std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    std::map<std::string, int> options;
+    std::map<std::string, uint64_t> options;
     options["blksize"] = 2048;
 
     WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options); // Create an ACK packet with block number 0
@@ -87,7 +87,7 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
     server_addr.sin_port = htons(port);
 
-    std::map<std::string, int> options;
+    std::map<std::string, uint64_t> options;
     options["blksizeadad"] = 1024;
 
     ReadRequestPacket packet(filepath, DataMode::NETASCII, options);

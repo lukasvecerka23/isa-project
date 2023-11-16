@@ -1,5 +1,6 @@
 #include "common/session.hpp"
 #include "common/packets.hpp"
+#include "common/exceptions.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -21,7 +22,7 @@ DataMode stringToMode(std::string value) {
     } else if (value == "octet") {
         return DataMode::OCTET;
     } else {
-        throw std::runtime_error("Invalid mode");
+        throw ParsingError("Invalid mode");
     }
 }
 
@@ -38,7 +39,7 @@ Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_
     this->sessionState = SessionState::INITIAL;
 }
 
-ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options)
+ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {
         this->options = options;
         this->TIDisSet = false;
@@ -82,8 +83,18 @@ void ClientSession::handleSession() {
         std::unique_ptr<Packet> packet;
         try {
             packet = Packet::parse(dst_addr, buffer, n);
-        } catch (const std::exception& e) {
-            ErrorPacket errorPacket(4, "Invalid TFTP operation");
+        } catch (const ParsingError& e) {
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
+            errorPacket.send(sessionSockfd, dst_addr);
+            return;
+        }
+        catch (const OptionError& e) {
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
+            errorPacket.send(sessionSockfd, dst_addr);
+            return;
+        }
+        catch (const std::exception& e) {
+            ErrorPacket errorPacket(0, e.what());
             errorPacket.send(sessionSockfd, dst_addr);
             return;
         }
@@ -161,7 +172,7 @@ void Session::writeDataBlock(std::vector<char> data) {
     }
 }
 
-void ClientSession::setOptions(std::map<std::string, int> newOptions){
+void ClientSession::setOptions(std::map<std::string, uint64_t> newOptions){
     options = newOptions;
 
     // Check if the options map contains the "blksize" option
@@ -192,7 +203,7 @@ void ClientSession::exit(){
     close(sessionSockfd);
 }
 
-ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options)
+ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {
         this->options = options;
 
@@ -289,10 +300,19 @@ void ServerSession::handleSession() {
         std::unique_ptr<Packet> packet;
         try {
             packet = Packet::parse(dst_addr, buffer, n);
-        } catch (const std::exception& e) {
-            ErrorPacket errorPacket(4, "Invalid TFTP operation");
+        } catch (const ParsingError& e) {
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
             errorPacket.send(sessionSockfd, dst_addr);
-            this->exit();
+            return;
+        }
+        catch (const OptionError& e) {
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
+            errorPacket.send(sessionSockfd, dst_addr);
+            return;
+        }
+        catch (const std::exception& e) {
+            ErrorPacket errorPacket(0, e.what());
+            errorPacket.send(sessionSockfd, dst_addr);
             return;
         }
 

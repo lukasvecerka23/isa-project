@@ -1,5 +1,6 @@
 #include "common/packets.hpp"
 #include "common/session.hpp"
+#include "common/exceptions.hpp"
 #include <vector>
 #include <memory>
 #include <stdexcept>
@@ -9,6 +10,25 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+
+bool checkOptions(std::map<std::string, uint64_t> options){
+    if (options.find("blksize") != options.end()){
+        if (options["blksize"] < MIN_BLOCK_SIZE || options["blksize"] > MAX_BLOCK_SIZE){
+            return false;
+        }
+    }
+    if (options.find("timeout") != options.end()){
+        if (options["timeout"] < MIN_TIMEOUT || options["timeout"] > MAX_TIMEOUT){
+            return false;
+        }
+    }
+    if (options.find("tsize") != options.end()){
+        if (options["tsize"] < MIN_TSIZE || options["tsize"] > MAX_TSIZE){
+            return false;
+        }
+    }
+    return true;
+}
 
 std::pair<std::string, const char*> parseNetasciiString(const char* buffer, const char* start, const char* end) {
     std::string result;
@@ -41,7 +61,7 @@ std::pair<std::string, const char*> parseNetasciiString(const char* buffer, cons
 // PACKET
 std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     if (bufferSize < 2) {
-        throw std::runtime_error("Buffer too short to determine opcode");
+        throw ParsingError("Buffer too short to determine opcode");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
@@ -60,7 +80,7 @@ std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size
         case 6: // OACK
             return std::make_unique<OACKPacket>(OACKPacket::parse(addr, buffer, bufferSize));
         default:
-            throw std::runtime_error("Unknown or unhandled TFTP opcode");
+            throw ParsingError("Unknown or unhandled TFTP opcode");
     }
 }
 
@@ -78,7 +98,7 @@ void Packet::send(int socket, sockaddr_in dst_addr) {
 
 // REQUEST PACKET
 // Constructor for TFTPRequestPacket
-RequestPacket::RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options)
+RequestPacket::RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
     : filename(filename), mode(mode), options(options) {}
 
 const std::set<std::string> RequestPacket::supportedOptions = {"blksize", "timeout", "tsize"};
@@ -109,12 +129,12 @@ std::vector<char> RequestPacket::serialize() const {
     switch (opcode){
         case 1:
         {
-            std::cout << "=> RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeToString(mode) << optMessage << std::endl;
+            std::cout << "=> RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeToString(mode) << " " << optMessage << std::endl;
             break;
         }
         case 2:
         {
-            std::cerr << "=> WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeToString(mode) << optMessage <<std::endl;
+            std::cerr << "=> WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeToString(mode) << " " << optMessage <<std::endl;
             break;
         }
     }
@@ -124,17 +144,17 @@ std::vector<char> RequestPacket::serialize() const {
 
 // WRITE REQUEST PACKET
 // Constructor
-WriteRequestPacket::WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options)
+WriteRequestPacket::WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
     : RequestPacket(filename, mode, options) {}
 
 WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing write request packet
     if (bufferSize < 4){
-        throw std::runtime_error("Buffer too short for WRQ packet");
+        throw ParsingError("Buffer too short for WRQ packet");
     }
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 2) { // 2 is the opcode for WRQ
-        throw std::runtime_error("Invalid opcode for DATA packet");
+        throw ParsingError("Invalid opcode for DATA packet");
     }
 
     const char* current = buffer + 2;
@@ -142,28 +162,35 @@ WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffe
 
 
     std::string filename(current, filenameEnd);
-    current = filenameEnd+1;
-    if (filename.empty() || *current != '\0' || filename.find('/') != std::string::npos) {
-        throw std::runtime_error("Invalid filename");
+    if (filename.empty() || filenameEnd == buffer + bufferSize) {
+        throw ParsingError("Invalid filename");
     }
+    current = filenameEnd+1;
 
     const char* modeEnd = std::find(current, buffer + bufferSize, '\0');
     std::string modeStr(current, modeEnd);
+    if (modeStr.empty() || modeEnd == buffer + bufferSize) {
+        throw ParsingError("Invalid mode");
+    }
     current = modeEnd + 1;
     DataMode mode = stringToMode(modeStr);
-    if (modeStr.empty() || *current != '\0') {
-        throw std::runtime_error("Invalid mode");
-    }
 
-    std::map<std::string, int> options;
+
+    std::map<std::string, uint64_t> options;
     std::string optMessage = "";
     while (current < buffer + bufferSize) {
         const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionName(current, optionEnd);
+        if (optionName.empty() || optionEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option name");
+        }
         current = optionEnd + 1;
 
         const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionValueStr(current, valueEnd);
+        if (optionValueStr.empty() || valueEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option value");
+        }
         current = valueEnd + 1;
 
         optMessage += optionName + "=" + optionValueStr + " ";
@@ -171,10 +198,19 @@ WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffe
         if (supportedOptions.find(optionName) == supportedOptions.end()) {
             continue;
         }
-        int optionValue = std::stoi(optionValueStr);
+        int optionValue;
+        try{
+            optionValue = std::stoi(optionValueStr);
+        } catch (const std::exception& e){
+            throw OptionError("Invalid option value");
+        }
         options[optionName] = optionValue;
         
     }
+    if (!checkOptions(options)){
+        throw OptionError("Invalid option values");
+    }
+
     std::cerr << "WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr << " " << optMessage << std::endl;
     return WriteRequestPacket(filename, mode, options);
 }
@@ -193,41 +229,53 @@ void WriteRequestPacket::handleServer(ServerSession& session) const {
 
 // READ REQUEST PACKET
 // Constructor
-ReadRequestPacket::ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, int> options)
+ReadRequestPacket::ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
     : RequestPacket(filename, mode, options) {}
 
 ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing read request packet
     if (bufferSize < 4){
-        throw std::runtime_error("Buffer too short for RRQ packet");
+        throw ParsingError("Buffer too short for RRQ packet");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 1) { // 1 is the opcode for RRQ
-        throw std::runtime_error("Invalid opcode for DATA packet");
+        throw ParsingError("Invalid opcode for DATA packet");
     }
 
     const char* current = buffer + 2;
-
     const char* filenameEnd = std::find(current, buffer + bufferSize, '\0');
 
+
     std::string filename(current, filenameEnd);
+    if (filename.empty() || filenameEnd == buffer + bufferSize) {
+        throw ParsingError("Invalid filename");
+    }
     current = filenameEnd+1;
 
     const char* modeEnd = std::find(current, buffer + bufferSize, '\0');
     std::string modeStr(current, modeEnd);
+    if (modeStr.empty() || modeEnd == buffer + bufferSize) {
+        throw ParsingError("Invalid mode");
+    }
     current = modeEnd + 1;
     DataMode mode = stringToMode(modeStr);
 
-    std::map<std::string, int> options;
+    std::map<std::string, uint64_t> options;
     std::string optMessage = "";
     while (current < buffer + bufferSize) {
         const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionName(current, optionEnd);
+        if (optionName.empty() || optionEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option name");
+        }
         current = optionEnd + 1;
 
         const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionValueStr(current, valueEnd);
+        if (optionValueStr.empty() || valueEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option value");
+        }
         current = valueEnd + 1;
 
         optMessage += optionName + "=" + optionValueStr + " ";
@@ -235,11 +283,18 @@ ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer,
         if (supportedOptions.find(optionName) == supportedOptions.end()) {
             continue;
         }
-
-        int optionValue = std::stoi(optionValueStr);
+        int optionValue;
+        try{
+            optionValue = std::stoi(optionValueStr);
+        } catch (const std::exception& e){
+            throw OptionError("Invalid option value");
+        }
         options[optionName] = optionValue;
     }
 
+    if (!checkOptions(options)){
+        throw OptionError("Invalid option values");
+    }
     std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr << optMessage << std::endl;
     return ReadRequestPacket(filename, mode, options);
 }
@@ -265,12 +320,12 @@ DataPacket::DataPacket(uint16_t blockNumber, const std::vector<char>& data)
 DataPacket DataPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing data packet
     if (bufferSize < 4){
-        throw std::runtime_error("Buffer too short for DATA packet");
+        throw ParsingError("Buffer too short for DATA packet");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 3) { // 3 is the opcode for DATA
-        throw std::runtime_error("Invalid opcode for DATA packet");
+        throw ParsingError("Invalid opcode for DATA packet");
     }
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
@@ -439,12 +494,12 @@ std::vector<char> ACKPacket::serialize() const {
 // Static parse method implementation
 ACKPacket ACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     if (bufferSize < 4) {
-        throw std::runtime_error("Buffer too short for ACK packet");
+        throw ParsingError("Buffer too short for ACK packet");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 4) { // 4 is the opcode for ACK
-        throw std::runtime_error("Invalid opcode for ACK packet");
+        throw ParsingError("Invalid opcode for ACK packet");
     }
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
@@ -589,17 +644,20 @@ ErrorPacket::ErrorPacket(uint16_t errorCode, const std::string& errorMessage)
 ErrorPacket ErrorPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing error packet
     if (bufferSize < 5){
-        throw std::runtime_error("Buffer too short for ERROR packet");
+        throw ParsingError("Buffer too short for ERROR packet");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 5) { // 4 is the opcode for ACK
-        throw std::runtime_error("Invalid opcode for ACK packet");
+        throw ParsingError("Invalid opcode for ACK packet");
     }
 
     uint16_t errorCode = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     const char* errorMessageEnd = std::find(buffer + 4, buffer + bufferSize, '\0');
     std::string errorMessage(buffer + 4, errorMessageEnd);
+    if (errorMessageEnd == buffer + bufferSize) {
+        throw ParsingError("Invalid error message");
+    }
     std::cerr << "ERROR " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << errorCode << " " << errorMessage << std::endl;
     return ErrorPacket(errorCode, errorMessage);
 }
@@ -627,7 +685,7 @@ void ErrorPacket::handleServer(ServerSession& session) const {
     session.sessionState = SessionState::ERROR;
 }
 
-OACKPacket::OACKPacket(std::map<std::string, int> options)
+OACKPacket::OACKPacket(std::map<std::string, uint64_t> options)
     : options(options) {}
 
 
@@ -652,24 +710,32 @@ std::vector<char> OACKPacket::serialize() const {
 OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing OACK packet
     if (bufferSize < 4){
-        throw std::runtime_error("Buffer too short for OACK packet");
+        throw ParsingError("Buffer too short for OACK packet");
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
     if (opcode != 6) { // 4 is the opcode for ACK
-        throw std::runtime_error("Invalid opcode for ACK packet");
+        throw ParsingError("Invalid opcode for ACK packet");
     }
 
     const char* current = buffer + 2;
-    std::map<std::string, int> options;
+
+
+    std::map<std::string, uint64_t> options;
     std::string optMessage = "";
     while (current < buffer + bufferSize) {
         const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionName(current, optionEnd);
+        if (optionName.empty() || optionEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option name");
+        }
         current = optionEnd + 1;
 
         const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionValueStr(current, valueEnd);
+        if (optionValueStr.empty() || valueEnd == buffer + bufferSize) {
+            throw OptionError("Invalid option value");
+        }
         current = valueEnd + 1;
 
         optMessage += optionName + "=" + optionValueStr + " ";
@@ -677,10 +743,19 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
         if (RequestPacket::supportedOptions.find(optionName) == RequestPacket::supportedOptions.end()) {
             continue;
         }
-        int optionValue = std::stoi(optionValueStr);
+        int optionValue;
+        try{
+            optionValue = std::stoi(optionValueStr);
+        } catch (const std::exception& e){
+            throw OptionError("Invalid option value");
+        }
         options[optionName] = optionValue;
-        
     }
+
+    if (!checkOptions(options)){
+        throw OptionError("Invalid option values");
+    }
+
     std::cerr << "OACK " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << optMessage << std::endl;
     return OACKPacket(options);
 }
