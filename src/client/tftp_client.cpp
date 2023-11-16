@@ -55,7 +55,7 @@ void TFTPClient::upload(std::string dest_filepath) {
     std::map<std::string, int> options;
     options["blksize"] = 2048;
 
-    WriteRequestPacket packet(dest_filepath, DataMode::NETASCII, options); // Create an ACK packet with block number 0
+    WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options); // Create an ACK packet with block number 0
     packet.send(sockfd, server_addr);
 
 
@@ -63,11 +63,6 @@ void TFTPClient::upload(std::string dest_filepath) {
 
     ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE, options);
     session.handleSession();
-
-    // Here you might want to wait for a response depending on your application's needs
-
-    // Close the socket
-    close(sockfd);
 }
 
 void TFTPClient::download(std::string filepath, std::string dest_filepath) {
@@ -75,36 +70,31 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
               << " with filepath: " << filepath 
               << " to destination filepath: " << dest_filepath << std::endl;
 
-        // Initialize hints for getaddrinfo
-        struct addrinfo hints, *res;
-        std::memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET;      // AF_INET for IPv4
-        hints.ai_socktype = SOCK_DGRAM; // Datagram socket for UDP
+    // Initialize hints for getaddrinfo
+    struct addrinfo hints, *res;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;      // AF_INET for IPv4
+    hints.ai_socktype = SOCK_DGRAM; // Datagram socket for UDP
 
-        // Resolve hostname to IP address
-        if (getaddrinfo(hostname.c_str(), nullptr, &hints, &res) != 0) {
-            std::cerr << "Could not resolve hostname\n";
-            close(sockfd);
-            return;
-        }
-
-        // Send the initial request to the server
-        struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
-        server_addr.sin_port = htons(port);
-
-        std::map<std::string, int> options;
-        options["blksizeadad"] = 1024;
-
-        ReadRequestPacket packet(filepath, DataMode::NETASCII, options);
-        packet.send(sockfd, server_addr);
-
-        struct sockaddr_in from_addr;
-
-        ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
-        session.handleSession();
-
-        // Here you might want to wait for a response depending on your application's needs
-
-        // Close the socket
+    // Resolve hostname to IP address
+    if (getaddrinfo(hostname.c_str(), nullptr, &hints, &res) != 0) {
+        std::cerr << "Could not resolve hostname\n";
         close(sockfd);
+        return;
+    }
+
+    // Send the initial request to the server
+    struct sockaddr_in server_addr = *(struct sockaddr_in*)res->ai_addr;
+    server_addr.sin_port = htons(port);
+
+    std::map<std::string, int> options;
+    options["blksizeadad"] = 1024;
+
+    ReadRequestPacket packet(filepath, DataMode::NETASCII, options);
+    packet.send(sockfd, server_addr);
+
+    struct sockaddr_in from_addr;
+
+    ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
+    session.handleSession();
 }

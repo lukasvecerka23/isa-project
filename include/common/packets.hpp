@@ -8,7 +8,6 @@
 #include <netinet/in.h>
 #include "common/session.hpp"
 
-std::string convertToNetascii(const std::string& str);
 std::pair<std::string, const char*> parseNetasciiString(const char* buffer, const char* start, const char* end);
 
 class Packet {

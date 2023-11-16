@@ -30,13 +30,13 @@ enum class SessionState {
     WAITING_LAST_ACK,
     WAITING_DATA,
     WRQ_END,
-    RRQ_END
+    RRQ_END,
+    ERROR
 };
 
 class Session {
 public:
     Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
-    ~Session();
     virtual void handleSession() {}
     sockaddr_in dst_addr;
     int srcTID;
@@ -61,6 +61,8 @@ public:
     void handleSession() override;
     std::vector<char> readDataBlock();
     void setOptions(std::map<std::string, int> options);
+    bool TIDisSet;
+    void exit();
 };
 
 class ServerSession : public Session {
@@ -69,7 +71,7 @@ public:
     void handleSession() override;
     std::vector<char> readDataBlock();
     std::ifstream readStream;
-    
+    void exit();
 };
 
 #endif 

@@ -3,6 +3,7 @@
 #include "common/packets.hpp"
 #include "common/session.hpp"
 #include <sys/stat.h>
+#include <filesystem>
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
@@ -27,6 +28,8 @@ int bind_new_socket(){
         close(sockfd);
         throw std::runtime_error("Failed to bind socket to port");
     }
+
+    std::cout << "New socket bound to port " << ntohs(server_addr.sin_port) << std::endl;
     return sockfd;
 }
 
@@ -56,6 +59,7 @@ TFTPServer::TFTPServer(int port, std::string rootDirPath)
             // Directory does not exist, attempt to create it
             if (mkdir(rootDirPath.c_str(), 0700) == -1) { // 0700 permissions - owner can read, write, and execute
                 std::cerr << "Failed to create directory: " << rootDirPath << std::endl;
+                throw std::runtime_error("Failed to create directory");
             }
         }
         std::cout << "Starting TFTP server on port " << port 
@@ -75,11 +79,10 @@ void TFTPServer::start() {
                                           (struct sockaddr *)&client_addr, &client_len);
         if (received_bytes < 0) {
             std::cout << "Failed to receive data\n";
-            continue; // In a real server you might want to handle this differently
+            return;
         }
 
         // TODO: run new thread for each client
-        // Handle the received data
         handleClientRequest(client_addr, buffer, received_bytes);
     }
 
@@ -89,34 +92,52 @@ void TFTPServer::start() {
 
 void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* buffer, ssize_t bufferSize) {
     // Parse the packet
+    std::unique_ptr<Packet> packet;
     try {
-        std::unique_ptr<Packet> packet = Packet::parse(clientAddr, buffer, bufferSize);
+        packet = Packet::parse(clientAddr, buffer, bufferSize);
+    }
+    catch (const std::exception& e) {
+        ErrorPacket errorPacket(4, "Invalid TFTP operation");
+        errorPacket.send(sockfd, clientAddr);
+        return;
+    }
 
-        // Handle the packet
-        switch (packet->getOpcode()){
-            case 1: // RRQ
-            {
-                int sockfd = bind_new_socket();
-                ReadRequestPacket* readPacket = dynamic_cast<ReadRequestPacket*>(packet.get());
-                ServerSession readSession(sockfd, clientAddr, rootDirPath + "/" + readPacket->filename, "", readPacket->mode, SessionType::READ, readPacket->options);
-                readSession.handleSession();
+    // Handle the packet
+    switch (packet->getOpcode()){
+        case 1: // RRQ
+        {
+            int sockfd = bind_new_socket();
+            ReadRequestPacket* readPacket = dynamic_cast<ReadRequestPacket*>(packet.get());
+            readPacket->filename = rootDirPath + "/" + readPacket->filename;
+            if (!std::filesystem::exists(readPacket->filename)){
+                ErrorPacket errorPacket(1, "File not found");
+                errorPacket.send(sockfd, clientAddr);
+                close(sockfd);
                 break;
             }
-            case 2: // WRQ
-            {
-                int sockfd = bind_new_socket();
-                WriteRequestPacket* writePacket = dynamic_cast<WriteRequestPacket*>(packet.get());
-                ServerSession writeSession(sockfd, clientAddr, "", rootDirPath + "/" + writePacket->filename, writePacket->mode, SessionType::WRITE, writePacket->options);
-                writeSession.handleSession();
-                break;
-            }
-            default:
-                throw std::runtime_error("Unknown or unhandled TFTP opcode");
+            ServerSession readSession(sockfd, clientAddr, readPacket->filename, "", readPacket->mode, SessionType::READ, readPacket->options);
+            readSession.handleSession();
+            break;
         }
-
-    } catch (const std::runtime_error& e) {
-        std::cerr << "Failed to parse packet: " << e.what() << std::endl;
-        // Handle error
+        case 2: // WRQ
+        {
+            int sockfd = bind_new_socket();
+            WriteRequestPacket* writePacket = dynamic_cast<WriteRequestPacket*>(packet.get());
+            writePacket->filename = rootDirPath + "/" + writePacket->filename;
+            if (std::filesystem::exists(writePacket->filename)){
+                ErrorPacket errorPacket(6, "File already exists");
+                errorPacket.send(sockfd, clientAddr);
+                close(sockfd);
+                break;
+            }
+            ServerSession writeSession(sockfd, clientAddr, "", writePacket->filename, writePacket->mode, SessionType::WRITE, writePacket->options);
+            writeSession.handleSession();
+            break;
+        }
+        default:
+            ErrorPacket errorPacket(4, "Illegal TFTP operation");
+            errorPacket.send(sockfd, clientAddr);
+            break;
     }
 }
 

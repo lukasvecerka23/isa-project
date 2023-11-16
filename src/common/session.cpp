@@ -38,13 +38,10 @@ Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_
     this->sessionState = SessionState::INITIAL;
 }
 
-Session::~Session() {
-    close(sessionSockfd);
-}
-
 ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {
         this->options = options;
+        this->TIDisSet = false;
     }
 
 void ClientSession::handleSession() {
@@ -52,26 +49,49 @@ void ClientSession::handleSession() {
         std::cout << "Opening file on client: " << dst_filename << std::endl;
         this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
         if (!writeStream.is_open()) {
-            throw std::runtime_error("Failed to open file");
+            std::cout << "Failed to open file: " << dst_filename << std::endl;
+            return;
         }
         blockNumber = 1;
     }
     if (!options.empty()){
         sessionState = SessionState::WAITING_OACK;
     }
+
     char buffer[BUFFER_SIZE];
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
         if (n < 0) {
             std::cerr << "Failed to receive data\n";
-            continue; // In a real server you might want to handle this differently
+            return;
         }
-        std::unique_ptr<Packet> packet = Packet::parse(dst_addr, buffer, n);
+
+        if (!TIDisSet){
+            this->srcTID = ntohs(dst_addr.sin_port);
+            TIDisSet = true;
+        }
+
+        int srcTID = ntohs(dst_addr.sin_port);
+        if (srcTID != this->srcTID){
+            ErrorPacket errorPacket(5, "Unknown transfer ID");
+            errorPacket.send(sessionSockfd, dst_addr);
+            continue;
+        }
+
+        std::unique_ptr<Packet> packet;
+        try {
+            packet = Packet::parse(dst_addr, buffer, n);
+        } catch (const std::exception& e) {
+            ErrorPacket errorPacket(4, "Invalid TFTP operation");
+            errorPacket.send(sessionSockfd, dst_addr);
+            return;
+        }
 
         packet->handleClient(*this);
-        if (sessionState == SessionState::RRQ_END || sessionState == SessionState::WRQ_END){
-            break;
+        if (sessionState == SessionState::RRQ_END || sessionState == SessionState::WRQ_END || sessionState == SessionState::ERROR){
+            this->exit();
+            return;
         }
     }
 }
@@ -83,6 +103,9 @@ std::vector<char> ClientSession::readDataBlock() {
             {
                 char ch;
                 while(std::cin.get(ch) && data.size() ){
+                    if (std::cin.fail()){
+                        throw std::runtime_error("Failed to read data from stdin");
+                    }
                     if (ch == '\n'){
                         data.push_back('\r');
                         if (data.size() < blockSize){
@@ -104,7 +127,7 @@ std::vector<char> ClientSession::readDataBlock() {
             std::cin.read(data.data(), blockSize);
             ssize_t bytesRead = std::cin.gcount();
             
-            if (bytesRead <= 0) {
+            if (bytesRead < 0) {
                 throw std::runtime_error("Failed to read data from stdin");
             }
 
@@ -112,9 +135,6 @@ std::vector<char> ClientSession::readDataBlock() {
             break;
     }
 
-    if (data.empty()){
-        throw std::runtime_error("Failed to read data from stdin");
-    }
     return data;
 }
 
@@ -166,6 +186,12 @@ void ClientSession::setOptions(std::map<std::string, int> newOptions){
     }
 }
 
+void ClientSession::exit(){
+    std::cout << "Exiting client session" << std::endl;
+    writeStream.close();
+    close(sessionSockfd);
+}
+
 ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, int> options)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {
         this->options = options;
@@ -193,23 +219,22 @@ ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std:
     }
 
 void ServerSession::handleSession() {
-
     char buffer[BUFFER_SIZE];
     if (sessionType == SessionType::WRITE){
         std::cout << "Opening file on server: " << dst_filename << std::endl;
         this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
         if (!writeStream.is_open()) {
-            throw std::runtime_error("Failed to open file");
+            ErrorPacket errorPacket(2, "Access violation");
+            errorPacket.send(sessionSockfd, dst_addr);
+            return;
         }
 
         if(options.empty()){
-            std::cout << "Sending ACK packet with block number 0" << std::endl;
             ACKPacket ackPacket(0);
             ackPacket.send(sessionSockfd, dst_addr);
             blockNumber = 1;
             sessionState = SessionState::WAITING_DATA;
         } else {
-            std::cout << "Sending OACK packet" << std::endl;
             OACKPacket oackPacket(options);
             oackPacket.send(sessionSockfd, dst_addr);
             blockNumber = 1;
@@ -219,10 +244,22 @@ void ServerSession::handleSession() {
         std::cout << "Opening file on server: " << src_filename << std::endl;
         this->readStream.open(src_filename, std::ios::binary | std::ios::in);
         if (!readStream.is_open()) {
-            throw std::runtime_error("Failed to open file");
+            ErrorPacket errorPacket(2, "Access violation");
+            errorPacket.send(sessionSockfd, dst_addr);
+            this->exit();
+            return;
         }
         if (options.empty()){
-            DataPacket dataPacket(1, readDataBlock());
+            std::vector<char> data;
+            try {
+            data = readDataBlock();
+            } catch (const std::runtime_error& e) {
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
+                errorPacket.send(sessionSockfd, dst_addr);
+                this->exit();
+                return;
+            }
+            DataPacket dataPacket(1, data);
             dataPacket.send(sessionSockfd, dst_addr);
             blockNumber++;
             sessionState = SessionState::WAITING_ACK;
@@ -236,14 +273,33 @@ void ServerSession::handleSession() {
     while(true){
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
         if (n < 0) {
-            std::cerr << "Failed to receive data\n";
-            continue; // In a real server you might want to handle this differently
+            std::cout << "Failed to receive data\n";
+            this->exit();
+            return;
         }
-        std::unique_ptr<Packet> packet = Packet::parse(dst_addr, buffer, n);
+
+        int srcTID = ntohs(dst_addr.sin_port);
+        if (srcTID != this->srcTID){
+            ErrorPacket errorPacket(5, "Unknown transfer ID");
+            errorPacket.send(sessionSockfd, dst_addr);
+            this->exit();
+            return;
+        }
+
+        std::unique_ptr<Packet> packet;
+        try {
+            packet = Packet::parse(dst_addr, buffer, n);
+        } catch (const std::exception& e) {
+            ErrorPacket errorPacket(4, "Invalid TFTP operation");
+            errorPacket.send(sessionSockfd, dst_addr);
+            this->exit();
+            return;
+        }
 
         packet->handleServer(*this);
-        if (sessionState == SessionState::WRQ_END || sessionState == SessionState::RRQ_END){
-            break;
+        if (sessionState == SessionState::WRQ_END || sessionState == SessionState::RRQ_END || sessionState == SessionState::ERROR){
+            this->exit();
+            return;
         }
     }
 }
@@ -259,6 +315,13 @@ std::vector<char> ServerSession::readDataBlock() {
     data.resize(bytesRead);
 
     return data;
+}
+
+void ServerSession::exit(){
+    std::cout << "Exiting server session" << std::endl;
+    writeStream.close();
+    readStream.close();
+    close(sessionSockfd);
 }
 
 
