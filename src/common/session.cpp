@@ -366,7 +366,11 @@ void ServerSession::handleSession() {
             DataPacket dataPacket(1, data, dst_addr);
             dataPacket.send(this, sessionSockfd);
             blockNumber++;
-            sessionState = SessionState::WAITING_ACK;
+            if (data.size() < blockSize){
+                sessionState = SessionState::WAITING_LAST_ACK;
+            } else {
+                sessionState = SessionState::WAITING_ACK;
+            }
         } else {
             OACKPacket oackPacket(options, dst_addr);
             oackPacket.send(this, sessionSockfd);
@@ -406,7 +410,6 @@ void ServerSession::handleSession() {
                 return;
             }
         }
-
         retries = 0;
         timeout = 5;
 

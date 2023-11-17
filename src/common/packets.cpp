@@ -379,15 +379,13 @@ void DataPacket::handleClient(ClientSession* session) const {
                     session->sessionState = SessionState::ERROR;
                     break;
                 }
-                
+                session->sessionState = SessionState::WAITING_DATA;
                 if (data.size() < session->blockSize){
                     session->sessionState = SessionState::RRQ_END;
-                    break;
                 }
                 ACKPacket ackPacket(session->blockNumber, session->dst_addr);
                 ackPacket.send(session, session->sessionSockfd);
                 session->blockNumber++;
-                session->sessionState = SessionState::WAITING_DATA;
             } else {
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
                 errorPacket.send(session, session->sessionSockfd);
@@ -432,15 +430,15 @@ void DataPacket::handleClient(ClientSession* session) const {
                     session->sessionState = SessionState::ERROR;
                     break;
                 }
+                session->sessionState = SessionState::WAITING_DATA;
                 
                 if (data.size() < session->blockSize){
                     session->sessionState = SessionState::RRQ_END;
-                    break;
                 }
                 ACKPacket ackPacket(session->blockNumber, session->dst_addr);
                 ackPacket.send(session, session->sessionSockfd);
                 session->blockNumber++;
-                session->sessionState = SessionState::WAITING_DATA;
+                
             } else {
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
                 errorPacket.send(session, session->sessionSockfd);
@@ -553,7 +551,6 @@ void ACKPacket::handleClient(ClientSession* session) const {
                 dataPacket.send(session, session->sessionSockfd);
                 if (data.size() < session->blockSize){
                     session->sessionState = SessionState::WAITING_LAST_ACK;
-                    break;
                 }
             } else {
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);

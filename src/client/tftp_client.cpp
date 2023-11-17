@@ -98,8 +98,6 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksize"] = 20;
-    options["tsize"] = 0; // 0 means we don't know the size of the file yet
 
     struct sockaddr_in from_addr;
     ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
