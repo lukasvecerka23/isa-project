@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <future>
 
 class TFTPServer {
 public:
@@ -47,6 +48,15 @@ public:
             throw std::runtime_error("Failed to bind socket to port");
         }
 
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
+        if (setsockopt(instance.sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+            std::cout << "Error setting socket options: " << strerror(errno) << std::endl;
+        } else {
+            std::cout << "Socket timeout set" << std::endl;
+        }
+
         struct stat st = {0};
 
         if (stat(rootDirPath.c_str(), &st) == -1) {
@@ -73,7 +83,7 @@ private:
     std::string rootDirPath;
     int sockfd;
     void handleClientRequest(const sockaddr_in& clientAddr, const char* buffer, ssize_t bufferSize);
-    std::vector<std::thread> clientThreads;
+    std::vector<std::future<void>> clientFutures;
 };
 
 #endif 

@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <future>
 
 int bind_new_socket(){
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -34,10 +35,15 @@ int bind_new_socket(){
 
 void TFTPServer::shutDown() {
     // Wait for all client threads to finish
-    for (auto& thread : clientThreads) {
-        thread.join();
-        std::cout << "Client thread joined\n";
+    for (auto& future : clientFutures) {
+        if (future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout) {
+            future.get(); // This will block until the future is ready
+            std::cout << "Client session terminated from SIGINT" << std::endl;
+        }
     }
+
+    // Clear the vector of futures
+    clientFutures.clear();
 
     close(sockfd);
 
@@ -46,23 +52,31 @@ void TFTPServer::shutDown() {
 
 void TFTPServer::start() {
     std::cout << "Server listening on port " << port << std::endl;
-
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    char buffer[BUFFER_SIZE];
     // Enter a loop to receive data
     while (true) {
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        char buffer[BUFFER_SIZE];
         // Receive initial request from a clients
         ssize_t received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0,
                                           (struct sockaddr *)&client_addr, &client_len);
         if (received_bytes < 0) {
-            std::cout << "Failed to receive data\n";
-            return;
+            if (stopFlag->load()){
+                std::cout << "Stopping server..." << std::endl;
+                shutDown();
+               return;
+            }
+            continue;
         }
 
-        // TODO: run new thread for each client
-        std::thread clientThread(&TFTPServer::handleClientRequest, this, client_addr, buffer, received_bytes);
-        clientThreads.push_back(std::move(clientThread));
+        // Run new thread for each client
+        auto future = std::async(std::launch::async, &TFTPServer::handleClientRequest, this, client_addr, buffer, received_bytes);
+        clientFutures.push_back(std::move(future));
+
+        // Remove finished futures
+        clientFutures.erase(std::remove_if(clientFutures.begin(), clientFutures.end(), [](const std::future<void>& f) {
+            return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        }), clientFutures.end());
     }
 }
 
@@ -125,4 +139,5 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             errorPacket.send(sockfd, clientAddr);
             break;
     }
+    return;
 }

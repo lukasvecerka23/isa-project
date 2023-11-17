@@ -354,8 +354,6 @@ void ServerSession::handleSession() {
         if (srcTID != this->srcTID){
             ErrorPacket errorPacket(5, "Unknown transfer ID");
             errorPacket.send(sessionSockfd, dst_addr);
-            this->exit();
-            return;
         }
 
         std::unique_ptr<Packet> packet;

@@ -9,11 +9,9 @@
 // include other necessary headers
 
 void signalHandler(int signal) {
-    std::cout << "Stopping server..." << std::endl;
+    std::cout << "Server is going to stop..." << std::endl;
     if (signal == SIGINT){
         stopFlag->store(true);
-        TFTPServer& tftpServer = TFTPServer::getInstance();
-        tftpServer.shutDown();
     }
     
 }

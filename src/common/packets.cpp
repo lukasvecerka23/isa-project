@@ -527,12 +527,6 @@ void ACKPacket::handleClient(ClientSession& session) const {
         {
             if (session.blockNumber == this->blockNumber){
                 session.blockNumber++;
-                if (session.blockNumber > 0xFFFF){
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
-                    break;
-                }
                 std::vector<char> data = session.readDataBlock();
                 DataPacket dataPacket(session.blockNumber, data);
                 dataPacket.send(session.sessionSockfd, session.dst_addr);
@@ -593,12 +587,6 @@ void ACKPacket::handleServer(ServerSession& session) const {
         {
             if (session.blockNumber == this->blockNumber){
                 session.blockNumber++;
-                if (session.blockNumber > 0xFFFF){
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
-                    break;
-                }
                 std::vector<char> data = session.readDataBlock();
                 DataPacket dataPacket(session.blockNumber, data);
                 dataPacket.send(session.sessionSockfd, session.dst_addr);
