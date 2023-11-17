@@ -54,7 +54,7 @@ void TFTPClient::upload(std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksize"] = 2048;
+    options["blksize"] = 20;
 
     std::ostringstream ss;
     ss << std::cin.rdbuf();
@@ -97,7 +97,7 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksize"] = 5000;
+    options["blksize"] = 20;
     options["tsize"] = 0; // 0 means we don't know the size of the file yet
 
     ReadRequestPacket packet(filepath, DataMode::OCTET, options);

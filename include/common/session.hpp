@@ -15,6 +15,8 @@
 #include <fstream>
 #include <map>
 
+extern std::shared_ptr<std::atomic<bool>> stopFlag;
+
 enum class DataMode {
     NETASCII,
     OCTET

@@ -7,6 +7,9 @@
 #include <vector>
 #include <unistd.h>
 
+// Define stopFlag
+std::shared_ptr<std::atomic<bool>> stopFlag = std::make_shared<std::atomic<bool>>(false);
+
 std::string modeToString(DataMode value) {
     switch (value) {
         case DataMode::NETASCII: return "netascii";
@@ -27,7 +30,8 @@ DataMode stringToMode(std::string value) {
     }
 }
 
-Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType) {
+Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
+{
     this->dst_addr = dst_addr;
     this->srcTID = ntohs(dst_addr.sin_port);
     this->blockSize = 512;
@@ -63,6 +67,13 @@ void ClientSession::handleSession() {
     char buffer[BUFFER_SIZE];
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
+        if(stopFlag->load()){
+            ErrorPacket errorPacket(0, "Server shutdown");
+            errorPacket.send(sessionSockfd, dst_addr);
+            this->exit();
+            std::cout << "Server is shutting down exiting client session" << std::endl;
+            return;
+        }
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
         if (n < 0) {
             std::cerr << "Failed to receive data\n";
@@ -326,6 +337,12 @@ void ServerSession::handleSession() {
     }
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
+        if(stopFlag->load()){
+            ErrorPacket errorPacket(0, "Server shutdown");
+            errorPacket.send(sessionSockfd, dst_addr);
+            this->exit();
+            return;
+        }
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
         if (n < 0) {
             std::cout << "Failed to receive data\n";

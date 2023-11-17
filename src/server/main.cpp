@@ -3,8 +3,20 @@
 #include <string>
 #include <getopt.h>
 #include "server/tftp_server.hpp"
+#include "common/session.hpp"
+#include <csignal>
 
 // include other necessary headers
+
+void signalHandler(int signal) {
+    std::cout << "Stopping server..." << std::endl;
+    if (signal == SIGINT){
+        stopFlag->store(true);
+        TFTPServer& tftpServer = TFTPServer::getInstance();
+        tftpServer.shutDown();
+    }
+    
+}
 
 // Define the long options
 static struct option long_options[] = {
@@ -44,9 +56,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    
+    std::signal(SIGINT, signalHandler);
     // Initialize and start the TFTP server
     try {
-        TFTPServer tftpServer(port, root_dirpath);
+        TFTPServer::initialize(port, root_dirpath);
+        TFTPServer& tftpServer = TFTPServer::getInstance();
         tftpServer.start();
     } catch (const std::exception& e) {
         std::cerr << "Failed to start TFTP server: " << e.what() << std::endl;

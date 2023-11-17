@@ -3,7 +3,6 @@
 #include "common/packets.hpp"
 #include "common/session.hpp"
 #include "common/exceptions.hpp"
-#include <sys/stat.h>
 #include <filesystem>
 #include <iostream>
 #include <cstring>
@@ -33,38 +32,17 @@ int bind_new_socket(){
     return sockfd;
 }
 
-TFTPServer::TFTPServer(int port, std::string rootDirPath)
-    : port(port), rootDirPath(rootDirPath) {
-        // Create socket
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sockfd < 0) {
-            throw std::runtime_error("Failed to open socket");
-        }
-        // Initialize server address structure
-        struct sockaddr_in server_addr;
-        std::memset(&server_addr, 0, sizeof(server_addr));
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
-        server_addr.sin_port = htons(port);
-
-        // Bind socket to the server address
-        if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            close(sockfd);
-            throw std::runtime_error("Failed to bind socket to port");
-        }
-
-        struct stat st = {0};
-
-        if (stat(rootDirPath.c_str(), &st) == -1) {
-            // Directory does not exist, attempt to create it
-            if (mkdir(rootDirPath.c_str(), 0700) == -1) { // 0700 permissions - owner can read, write, and execute
-                std::cerr << "Failed to create directory: " << rootDirPath << std::endl;
-                throw std::runtime_error("Failed to create directory");
-            }
-        }
-        std::cout << "Starting TFTP server on port " << port 
-        << " with root directory: " << rootDirPath << std::endl;
+void TFTPServer::shutDown() {
+    // Wait for all client threads to finish
+    for (auto& thread : clientThreads) {
+        thread.join();
+        std::cout << "Client thread joined\n";
     }
+
+    close(sockfd);
+
+    exit(0);
+}
 
 void TFTPServer::start() {
     std::cout << "Server listening on port " << port << std::endl;
@@ -83,11 +61,9 @@ void TFTPServer::start() {
         }
 
         // TODO: run new thread for each client
-        handleClientRequest(client_addr, buffer, received_bytes);
+        std::thread clientThread(&TFTPServer::handleClientRequest, this, client_addr, buffer, received_bytes);
+        clientThreads.push_back(std::move(clientThread));
     }
-
-    // Close the socket (this will never be reached in this example, but should be done when the server stops)
-    close(sockfd);
 }
 
 void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* buffer, ssize_t bufferSize) {
@@ -150,4 +126,3 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             break;
     }
 }
-
