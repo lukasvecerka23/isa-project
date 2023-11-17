@@ -30,6 +30,16 @@ DataMode stringToMode(std::string value) {
     }
 }
 
+void Session::setTimeout(){
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sessionSockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
+        std::cerr << "Failed to set timeout\n";
+        return;
+    }
+}
+
 Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
 {
     this->dst_addr = dst_addr;
@@ -42,6 +52,8 @@ Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_
     this->sessionType = sessionType;
     this->sessionSockfd = socket;
     this->sessionState = SessionState::INITIAL;
+    this->timeout = 5;
+    this->retries = 0;
 }
 
 ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options)
@@ -51,6 +63,7 @@ ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std:
     }
 
 void ClientSession::handleSession() {
+    setTimeout();
     if (sessionType == SessionType::READ){
         std::cout << "Opening file on client: " << dst_filename << std::endl;
         this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
@@ -68,17 +81,41 @@ void ClientSession::handleSession() {
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
         if(stopFlag->load()){
-            ErrorPacket errorPacket(0, "Server shutdown");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(0, "Server shutdown", dst_addr);
+            errorPacket.send(this, sessionSockfd);
             this->exit();
             std::cout << "Server is shutting down exiting client session" << std::endl;
             return;
         }
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
         if (n < 0) {
-            std::cerr << "Failed to receive data\n";
-            return;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Timeout occurred
+                if (++retries > 5) {
+                    std::cout << "Max retries reached, giving up." << std::endl;
+                    this->exit();
+                    return;
+                }
+
+                std::cout << "Timeout, retransmitting (attempt " << retries << ")." << std::endl;
+
+                // Retransmit the last packet
+                // (Assuming lastPacket is a function to resend the last packet)
+                lastPacket->send(this, sessionSockfd);
+
+                // Implement exponential backoff
+                timeout *= 2;
+                setTimeout();
+                continue;
+            } else {
+                std::cout << "Failed to receive data\n";
+                this->exit();
+                return;
+            }
         }
+
+        retries = 0;
+        timeout = 5;
 
         if (!TIDisSet){
             this->srcTID = ntohs(dst_addr.sin_port);
@@ -87,8 +124,8 @@ void ClientSession::handleSession() {
 
         int srcTID = ntohs(dst_addr.sin_port);
         if (srcTID != this->srcTID){
-            ErrorPacket errorPacket(5, "Unknown transfer ID");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(5, "Unknown transfer ID", dst_addr);
+            errorPacket.send(this, sessionSockfd);
             continue;
         }
 
@@ -96,22 +133,22 @@ void ClientSession::handleSession() {
         try {
             packet = Packet::parse(dst_addr, buffer, n);
         } catch (const ParsingError& e) {
-            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
         catch (const OptionError& e) {
-            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
         catch (const std::exception& e) {
-            ErrorPacket errorPacket(0, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(0, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
 
-        packet->handleClient(*this);
+        packet->handleClient(this);
         if (sessionState == SessionState::RRQ_END || sessionState == SessionState::WRQ_END || sessionState == SessionState::ERROR){
             this->exit();
             return;
@@ -242,13 +279,14 @@ ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std:
     }
 
 void ServerSession::handleSession() {
+    setTimeout();
     char buffer[BUFFER_SIZE];
     if (sessionType == SessionType::WRITE){
         std::cout << "Opening file on server: " << dst_filename << std::endl;
         this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
         if (!writeStream.is_open()) {
-            ErrorPacket errorPacket(2, "Access violation");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(2, "Access violation", dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
 
@@ -257,28 +295,28 @@ void ServerSession::handleSession() {
             struct statvfs stat;
             if (statvfs("/", &stat) != 0) {
                 // Error occurred getting filesystem stats
-                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                errorPacket.send(sessionSockfd, dst_addr);
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
+                errorPacket.send(this, sessionSockfd);
                 return;
             }
 
             uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
             if (freeSpace < options.at("tsize")) {
                 // Not enough disk space
-                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                errorPacket.send(sessionSockfd, dst_addr);
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
+                errorPacket.send(this, sessionSockfd);
                 return;
             }
         }
 
         if(options.empty()){
-            ACKPacket ackPacket(0);
-            ackPacket.send(sessionSockfd, dst_addr);
+            ACKPacket ackPacket(0, dst_addr);
+            ackPacket.send(this, sessionSockfd);
             blockNumber = 1;
             sessionState = SessionState::WAITING_DATA;
         } else {
-            OACKPacket oackPacket(options);
-            oackPacket.send(sessionSockfd, dst_addr);
+            OACKPacket oackPacket(options, dst_addr);
+            oackPacket.send(this, sessionSockfd);
             blockNumber = 1;
             sessionState = SessionState::WAITING_DATA;
         }
@@ -286,8 +324,8 @@ void ServerSession::handleSession() {
         std::cout << "Opening file on server: " << src_filename << std::endl;
         this->readStream.open(src_filename, std::ios::binary | std::ios::in);
         if (!readStream.is_open()) {
-            ErrorPacket errorPacket(2, "Access violation");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(2, "Access violation", dst_addr);
+            errorPacket.send(this, sessionSockfd);
             this->exit();
             return;
         }
@@ -297,16 +335,16 @@ void ServerSession::handleSession() {
             struct statvfs stat;
             if (statvfs("/", &stat) != 0) {
                 // Error occurred getting filesystem stats
-                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                errorPacket.send(sessionSockfd, dst_addr);
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
+                errorPacket.send(this, sessionSockfd);
                 return;
             }
 
             uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
             if (freeSpace < options.at("tsize")) {
                 // Not enough disk space
-                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                errorPacket.send(sessionSockfd, dst_addr);
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
+                errorPacket.send(this, sessionSockfd);
                 return;
             }
 
@@ -320,62 +358,84 @@ void ServerSession::handleSession() {
             try {
             data = readDataBlock();
             } catch (const std::runtime_error& e) {
-                ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                errorPacket.send(sessionSockfd, dst_addr);
+                ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
+                errorPacket.send(this, sessionSockfd);
                 this->exit();
                 return;
             }
-            DataPacket dataPacket(1, data);
-            dataPacket.send(sessionSockfd, dst_addr);
+            DataPacket dataPacket(1, data, dst_addr);
+            dataPacket.send(this, sessionSockfd);
             blockNumber++;
             sessionState = SessionState::WAITING_ACK;
         } else {
-            OACKPacket oackPacket(options);
-            oackPacket.send(sessionSockfd, dst_addr);
+            OACKPacket oackPacket(options, dst_addr);
+            oackPacket.send(this, sessionSockfd);
             sessionState = SessionState::WAITING_ACK;
         }
     }
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
         if(stopFlag->load()){
-            ErrorPacket errorPacket(0, "Server shutdown");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(0, "Server shutdown", dst_addr);
+            errorPacket.send(this, sessionSockfd);
             this->exit();
             return;
         }
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
+
         if (n < 0) {
-            std::cout << "Failed to receive data\n";
-            this->exit();
-            return;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Timeout occurred
+                if (++retries > 5) {
+                    std::cout << "Max retries reached, giving up." << std::endl;
+                    this->exit();
+                    return;
+                }
+
+                std::cout << "Timeout, retransmitting (attempt " << retries << ")." << std::endl;
+
+                lastPacket->send(this, sessionSockfd);
+
+                // Implement exponential backoff
+                timeout *= 2;
+                setTimeout();
+                continue;
+            } else {
+                std::cout << "Failed to receive data\n";
+                this->exit();
+                return;
+            }
         }
+
+        retries = 0;
+        timeout = 5;
 
         int srcTID = ntohs(dst_addr.sin_port);
         if (srcTID != this->srcTID){
-            ErrorPacket errorPacket(5, "Unknown transfer ID");
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(5, "Unknown transfer ID", dst_addr);
+            errorPacket.send(this, sessionSockfd);
         }
 
         std::unique_ptr<Packet> packet;
         try {
             packet = Packet::parse(dst_addr, buffer, n);
         } catch (const ParsingError& e) {
-            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
         catch (const OptionError& e) {
-            ErrorPacket errorPacket(ParsingError::errorCode, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
         catch (const std::exception& e) {
-            ErrorPacket errorPacket(0, e.what());
-            errorPacket.send(sessionSockfd, dst_addr);
+            ErrorPacket errorPacket(0, e.what(), dst_addr);
+            errorPacket.send(this, sessionSockfd);
             return;
         }
 
-        packet->handleServer(*this);
+        packet->handleServer(this);
         if (sessionState == SessionState::WRQ_END || sessionState == SessionState::RRQ_END || sessionState == SessionState::ERROR){
             this->exit();
             return;

@@ -42,6 +42,8 @@ enum class SessionState {
     ERROR
 };
 
+class Packet;
+
 class Session {
 public:
     Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType);
@@ -60,7 +62,10 @@ public:
     SessionState sessionState;
     std::ofstream writeStream;
     std::map<std::string, uint64_t> options;
+    int retries;
+    std::unique_ptr<Packet> lastPacket;
     void writeDataBlock(std::vector<char> data);
+    void setTimeout();
 };
 
 class ClientSession : public Session {

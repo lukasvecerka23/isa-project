@@ -30,6 +30,14 @@ int bind_new_socket(){
         throw std::runtime_error("Failed to bind socket to port");
     }
 
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        std::cout << "tady" << std::endl;
+        std::cout << "Error setting socket options: " << strerror(errno) << std::endl;
+    }
+
     return sockfd;
 }
 
@@ -87,18 +95,18 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
         packet = Packet::parse(clientAddr, buffer, bufferSize);
     }
     catch (const ParsingError& e) {
-        ErrorPacket errorPacket(ParsingError::errorCode, e.what());
-        errorPacket.send(sockfd, clientAddr);
+        ErrorPacket errorPacket(ParsingError::errorCode, e.what(), clientAddr);
+        errorPacket.send(nullptr, sockfd);
         return;
     }
     catch (const OptionError& e) {
-        ErrorPacket errorPacket(OptionError::errorCode, e.what());
-        errorPacket.send(sockfd, clientAddr);
+        ErrorPacket errorPacket(OptionError::errorCode, e.what(), clientAddr);
+        errorPacket.send(nullptr, sockfd);
         return;
     }
     catch (const std::exception& e) {
-        ErrorPacket errorPacket(0, e.what());
-        errorPacket.send(sockfd, clientAddr);
+        ErrorPacket errorPacket(0, e.what(), clientAddr);
+        errorPacket.send(nullptr, sockfd);
         return;
     }
 
@@ -110,8 +118,8 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             ReadRequestPacket* readPacket = dynamic_cast<ReadRequestPacket*>(packet.get());
             readPacket->filename = rootDirPath + "/" + readPacket->filename;
             if (!std::filesystem::exists(readPacket->filename)){
-                ErrorPacket errorPacket(1, "File not found");
-                errorPacket.send(sockfd, clientAddr);
+                ErrorPacket errorPacket(1, "File not found", clientAddr);
+                errorPacket.send(nullptr, sockfd);
                 close(sockfd);
                 break;
             }
@@ -125,8 +133,8 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             WriteRequestPacket* writePacket = dynamic_cast<WriteRequestPacket*>(packet.get());
             writePacket->filename = rootDirPath + "/" + writePacket->filename;
             if (std::filesystem::exists(writePacket->filename)){
-                ErrorPacket errorPacket(6, "File already exists");
-                errorPacket.send(sockfd, clientAddr);
+                ErrorPacket errorPacket(6, "File already exists", clientAddr);
+                errorPacket.send(nullptr, sockfd);
                 close(sockfd);
                 break;
             }
@@ -135,8 +143,8 @@ void TFTPServer::handleClientRequest(const sockaddr_in& clientAddr, const char* 
             break;
         }
         default:
-            ErrorPacket errorPacket(4, "Illegal TFTP operation");
-            errorPacket.send(sockfd, clientAddr);
+            ErrorPacket errorPacket(4, "Illegal TFTP operation", clientAddr);
+            errorPacket.send(nullptr, sockfd);
             break;
     }
     return;

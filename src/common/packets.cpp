@@ -85,22 +85,39 @@ std::unique_ptr<Packet> Packet::parse(sockaddr_in addr, const char* buffer, size
     }
 }
 
-void Packet::send(int socket, sockaddr_in dst_addr) {
-    addr = dst_addr;
-    std::vector<char> message = serialize();
-    ssize_t sentBytes = sendto(socket, message.data(), message.size(), 0, (struct sockaddr*)&dst_addr, sizeof(dst_addr));
+std::unique_ptr<Packet> createPacket(Packet& packet, int opcode) {
+    switch (opcode) {
+        case 1: return std::make_unique<ReadRequestPacket>(dynamic_cast<ReadRequestPacket&>(packet));
+        case 2: return std::make_unique<WriteRequestPacket>(dynamic_cast<WriteRequestPacket&>(packet));
+        case 3: return std::make_unique<DataPacket>(dynamic_cast<DataPacket&>(packet));
+        case 4: return std::make_unique<ACKPacket>(dynamic_cast<ACKPacket&>(packet));
+        case 5: return std::make_unique<ErrorPacket>(dynamic_cast<ErrorPacket&>(packet));
+        case 6: return std::make_unique<OACKPacket>(dynamic_cast<OACKPacket&>(packet));
+        default: return nullptr;
+    }
+}
+
+void Packet::send(Session* session, int socket) {
+    std::vector<char> message = this->serialize();
+    ssize_t sentBytes = sendto(socket, message.data(), message.size(), 0, (struct sockaddr*)&addr, sizeof(addr));
 
     if (sentBytes < 0) {
         std::cout << "Failed to send data\n";
         return;
+    }
+
+    if (session != nullptr){
+        session->lastPacket = createPacket(*this, this->getOpcode());
     }
 }
 
 
 // REQUEST PACKET
 // Constructor for TFTPRequestPacket
-RequestPacket::RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
-    : filename(filename), mode(mode), options(options) {}
+RequestPacket::RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr)
+    : filename(filename), mode(mode), options(options) {
+        this->addr = addr;
+    }
 
 const std::set<std::string> RequestPacket::supportedOptions = {"blksize", "timeout", "tsize"};
 
@@ -145,8 +162,8 @@ std::vector<char> RequestPacket::serialize() const {
 
 // WRITE REQUEST PACKET
 // Constructor
-WriteRequestPacket::WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
-    : RequestPacket(filename, mode, options) {}
+WriteRequestPacket::WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr)
+    : RequestPacket(filename, mode, options, addr) {}
 
 WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing write request packet
@@ -213,25 +230,25 @@ WriteRequestPacket WriteRequestPacket::parse(sockaddr_in addr, const char* buffe
     }
 
     std::cerr << "WRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr << " " << optMessage << std::endl;
-    return WriteRequestPacket(filename, mode, options);
+    return WriteRequestPacket(filename, mode, options, addr);
 }
 
-void WriteRequestPacket::handleClient(ClientSession& session) const {
-    ErrorPacket errorPacket(4, "Illegal TFTP operation");
-    errorPacket.send(session.sessionSockfd, session.dst_addr);
-    session.sessionState = SessionState::ERROR;
+void WriteRequestPacket::handleClient(ClientSession* session) const {
+    ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+    errorPacket.send(session, session->sessionSockfd);
+    session->sessionState = SessionState::ERROR;
 }
 
-void WriteRequestPacket::handleServer(ServerSession& session) const {
-    ErrorPacket errorPacket(4, "Illegal TFTP operation");
-    errorPacket.send(session.sessionSockfd, session.dst_addr);
-    session.sessionState = SessionState::ERROR;
+void WriteRequestPacket::handleServer(ServerSession* session) const {
+    ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+    errorPacket.send(session, session->sessionSockfd);
+    session->sessionState = SessionState::ERROR;
 }
 
 // READ REQUEST PACKET
 // Constructor
-ReadRequestPacket::ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options)
-    : RequestPacket(filename, mode, options) {}
+ReadRequestPacket::ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr)
+    : RequestPacket(filename, mode, options, addr) {}
 
 ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing read request packet
@@ -297,26 +314,28 @@ ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer,
         throw OptionError("Invalid option values");
     }
     std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr << optMessage << std::endl;
-    return ReadRequestPacket(filename, mode, options);
+    return ReadRequestPacket(filename, mode, options, addr);
 }
 
-void ReadRequestPacket::handleClient(ClientSession& session) const {
-    ErrorPacket errorPacket(4, "Illegal TFTP operation");
-    errorPacket.send(session.sessionSockfd, session.dst_addr);
-    session.sessionState = SessionState::ERROR;
+void ReadRequestPacket::handleClient(ClientSession* session) const {
+    ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+    errorPacket.send(session, session->sessionSockfd);
+    session->sessionState = SessionState::ERROR;
 }
 
-void ReadRequestPacket::handleServer(ServerSession& session) const {
-    ErrorPacket errorPacket(4, "Illegal TFTP operation");
-    errorPacket.send(session.sessionSockfd, session.dst_addr);
-    session.sessionState = SessionState::ERROR;
+void ReadRequestPacket::handleServer(ServerSession* session) const {
+    ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+    errorPacket.send(session, session->sessionSockfd);
+    session->sessionState = SessionState::ERROR;
 }
 
 
 // DATA PACKET
 // Constructor
-DataPacket::DataPacket(uint16_t blockNumber, const std::vector<char>& data)
-    : blockNumber(blockNumber), data(data) {}
+DataPacket::DataPacket(uint16_t blockNumber, const std::vector<char>& data, sockaddr_in addr)
+    : blockNumber(blockNumber), data(data) {
+        this->addr = addr;
+    }
 
 DataPacket DataPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     // parsing data packet
@@ -332,7 +351,7 @@ DataPacket DataPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     std::vector<char> data(buffer + 4, buffer + bufferSize);
     std::cerr << "DATA " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << blockNumber << std::endl;
-    return DataPacket(blockNumber, data);
+    return DataPacket(blockNumber, data, addr);
 }
 
 // Serialize method for TFTPDataPacket
@@ -347,131 +366,131 @@ std::vector<char> DataPacket::serialize() const {
     return buffer;
 }
 
-void DataPacket::handleClient(ClientSession& session) const {
-    switch(session.sessionState){
+void DataPacket::handleClient(ClientSession* session) const {
+    switch(session->sessionState){
         case SessionState::INITIAL:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 try {
-                    session.writeDataBlock(data);
+                    session->writeDataBlock(data);
                 } catch (const std::exception& e) {
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
+                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                    errorPacket.send(session, session->sessionSockfd);
+                    session->sessionState = SessionState::ERROR;
                     break;
                 }
                 
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::RRQ_END;
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::RRQ_END;
                     break;
                 }
-                ACKPacket ackPacket(session.blockNumber);
-                ackPacket.send(session.sessionSockfd, session.dst_addr);
-                session.blockNumber++;
-                session.sessionState = SessionState::WAITING_DATA;
+                ACKPacket ackPacket(session->blockNumber, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->blockNumber++;
+                session->sessionState = SessionState::WAITING_DATA;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         case SessionState::WAITING_DATA:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 try {
-                    session.writeDataBlock(data);
+                    session->writeDataBlock(data);
                 } catch (const std::exception& e) {
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
+                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                    errorPacket.send(session, session->sessionSockfd);
+                    session->sessionState = SessionState::ERROR;
                     break;
                 }
                 
-                if (data.size() < session.blockSize){
-                    session.writeStream.close();
-                    session.sessionState = SessionState::RRQ_END;
+                if (data.size() < session->blockSize){
+                    session->writeStream.close();
+                    session->sessionState = SessionState::RRQ_END;
                 }
-                ACKPacket ackPacket(session.blockNumber);
-                ackPacket.send(session.sessionSockfd, session.dst_addr);
-                session.blockNumber++;
+                ACKPacket ackPacket(session->blockNumber, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->blockNumber++;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         case SessionState::WAITING_OACK:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 try{
-                    session.writeDataBlock(data);
+                    session->writeDataBlock(data);
                 } catch (const std::exception& e) {
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
+                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                    errorPacket.send(session, session->sessionSockfd);
+                    session->sessionState = SessionState::ERROR;
                     break;
                 }
                 
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::RRQ_END;
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::RRQ_END;
                     break;
                 }
-                ACKPacket ackPacket(session.blockNumber);
-                ackPacket.send(session.sessionSockfd, session.dst_addr);
-                session.blockNumber++;
-                session.sessionState = SessionState::WAITING_DATA;
+                ACKPacket ackPacket(session->blockNumber, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->blockNumber++;
+                session->sessionState = SessionState::WAITING_DATA;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         default:
         {
-            ErrorPacket errorPacket(4, "Illegal TFTP operation");
-            errorPacket.send(session.sessionSockfd, session.dst_addr);
-            session.sessionState = SessionState::ERROR;
+            ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+            errorPacket.send(session, session->sessionSockfd);
+            session->sessionState = SessionState::ERROR;
         }
     
     }
 }
 
-void DataPacket::handleServer(ServerSession& session) const {
-    switch(session.sessionState){
+void DataPacket::handleServer(ServerSession* session) const {
+    switch(session->sessionState){
         case SessionState::WAITING_DATA:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 try{
-                    session.writeDataBlock(data);
+                    session->writeDataBlock(data);
                 } catch (const std::exception& e) {
-                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                    errorPacket.send(session.sessionSockfd, session.dst_addr);
-                    session.sessionState = SessionState::ERROR;
+                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                    errorPacket.send(session, session->sessionSockfd);
+                    session->sessionState = SessionState::ERROR;
                     break;
                 }
                 
-                if (data.size() < session.blockSize){
-                    session.writeStream.close();
-                    session.sessionState = SessionState::WRQ_END;
+                if (data.size() < session->blockSize){
+                    session->writeStream.close();
+                    session->sessionState = SessionState::WRQ_END;
                 }
-                ACKPacket ackPacket(session.blockNumber);
-                ackPacket.send(session.sessionSockfd, session.dst_addr);
-                session.blockNumber++;
+                ACKPacket ackPacket(session->blockNumber, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->blockNumber++;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         default:
         {
-            ErrorPacket errorPacket(4, "Illegal TFTP operation");
-            errorPacket.send(session.sessionSockfd, session.dst_addr);
-            session.sessionState = SessionState::ERROR;
+            ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+            errorPacket.send(session, session->sessionSockfd);
+            session->sessionState = SessionState::ERROR;
         }
     }
 }
@@ -479,7 +498,9 @@ void DataPacket::handleServer(ServerSession& session) const {
 
 // ACK PACKET
 // Constructor
-ACKPacket::ACKPacket(uint16_t blockNumber) : blockNumber(blockNumber) {}
+ACKPacket::ACKPacket(uint16_t blockNumber, sockaddr_in addr) : blockNumber(blockNumber) {
+    this->addr = addr;
+}
 
 // Serialize method
 std::vector<char> ACKPacket::serialize() const {
@@ -505,120 +526,120 @@ ACKPacket ACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSi
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     std::cerr << "ACK " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << blockNumber << std::endl;
-    return ACKPacket(blockNumber);
+    return ACKPacket(blockNumber, addr);
 }
 
-void ACKPacket::handleClient(ClientSession& session) const {
-    switch(session.sessionState){
+void ACKPacket::handleClient(ClientSession* session) const {
+    switch(session->sessionState){
         case SessionState::INITIAL:
         {
-            session.blockNumber = 1;
-            std::vector<char> data = session.readDataBlock();
-            DataPacket dataPacket(session.blockNumber, data);
-            dataPacket.send(session.sessionSockfd, session.dst_addr);
-            if (data.size() < session.blockSize){
-                session.sessionState = SessionState::WAITING_LAST_ACK;
+            session->blockNumber = 1;
+            std::vector<char> data = session->readDataBlock();
+            DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+            dataPacket.send(session, session->sessionSockfd);
+            if (data.size() < session->blockSize){
+                session->sessionState = SessionState::WAITING_LAST_ACK;
                 break;
             }
-            session.sessionState = SessionState::WAITING_ACK;
+            session->sessionState = SessionState::WAITING_ACK;
             break;
         }
         case SessionState::WAITING_ACK:
         {
-            if (session.blockNumber == this->blockNumber){
-                session.blockNumber++;
-                std::vector<char> data = session.readDataBlock();
-                DataPacket dataPacket(session.blockNumber, data);
-                dataPacket.send(session.sessionSockfd, session.dst_addr);
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::WAITING_LAST_ACK;
+            if (session->blockNumber == this->blockNumber){
+                session->blockNumber++;
+                std::vector<char> data = session->readDataBlock();
+                DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+                dataPacket.send(session, session->sessionSockfd);
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         case SessionState::WAITING_LAST_ACK:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 std::cout << "File transfer complete" << std::endl;
-                session.sessionState = SessionState::WRQ_END;
+                session->sessionState = SessionState::WRQ_END;
             } else {
-                ErrorPacket errorPacket(5, "Invalid block number");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(5, "Invalid block number", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         case SessionState::WAITING_OACK:
         {
-            if (session.blockNumber == this->blockNumber){
-                session.blockNumber++;
-                std::vector<char> data = session.readDataBlock();
-                DataPacket dataPacket(session.blockNumber, data);
-                dataPacket.send(session.sessionSockfd, session.dst_addr);
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::WAITING_LAST_ACK;
+            if (session->blockNumber == this->blockNumber){
+                session->blockNumber++;
+                std::vector<char> data = session->readDataBlock();
+                DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+                dataPacket.send(session, session->sessionSockfd);
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
-                session.sessionState = SessionState::WAITING_ACK;
+                session->sessionState = SessionState::WAITING_ACK;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         default:
         {
-            ErrorPacket errorPacket(4, "Illegal TFTP operation");
-            errorPacket.send(session.sessionSockfd, session.dst_addr);
-            session.sessionState = SessionState::ERROR;
+            ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+            errorPacket.send(session, session->sessionSockfd);
+            session->sessionState = SessionState::ERROR;
         }
     }
 }
 
-void ACKPacket::handleServer(ServerSession& session) const {
-    switch(session.sessionState){
+void ACKPacket::handleServer(ServerSession* session) const {
+    switch(session->sessionState){
         case SessionState::WAITING_ACK:
         {
-            if (session.blockNumber == this->blockNumber){
-                session.blockNumber++;
-                std::vector<char> data = session.readDataBlock();
-                DataPacket dataPacket(session.blockNumber, data);
-                dataPacket.send(session.sessionSockfd, session.dst_addr);
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::WAITING_LAST_ACK;
+            if (session->blockNumber == this->blockNumber){
+                session->blockNumber++;
+                std::vector<char> data = session->readDataBlock();
+                DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+                dataPacket.send(session, session->sessionSockfd);
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         case SessionState::WAITING_LAST_ACK:
         {
-            if (session.blockNumber == this->blockNumber){
+            if (session->blockNumber == this->blockNumber){
                 std::cout << "File transfer complete" << std::endl;
-                session.readStream.close();
-                session.sessionState = SessionState::RRQ_END;
+                session->readStream.close();
+                session->sessionState = SessionState::RRQ_END;
             } else {
-                ErrorPacket errorPacket(4, "Illegal TFTP operation");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
             break;
         }
         default:
         {
-            ErrorPacket errorPacket(4, "Illegal TFTP operation");
-            errorPacket.send(session.sessionSockfd, session.dst_addr);
-            session.sessionState = SessionState::ERROR;
+            ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+            errorPacket.send(session, session->sessionSockfd);
+            session->sessionState = SessionState::ERROR;
         }
     }
 }
@@ -626,8 +647,10 @@ void ACKPacket::handleServer(ServerSession& session) const {
 
 // ERROR PACKET
 // Constructor for ErrorPacket
-ErrorPacket::ErrorPacket(uint16_t errorCode, const std::string& errorMessage)
-    : errorCode(errorCode), errorMessage(errorMessage) {}
+ErrorPacket::ErrorPacket(uint16_t errorCode, const std::string& errorMessage, sockaddr_in addr)
+    : errorCode(errorCode), errorMessage(errorMessage) {
+        this->addr = addr;
+    }
 
 // Static parse method implementation
 ErrorPacket ErrorPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
@@ -648,7 +671,7 @@ ErrorPacket ErrorPacket::parse(sockaddr_in addr, const char* buffer, size_t buff
         throw ParsingError("Invalid error message");
     }
     std::cerr << "ERROR " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << errorCode << " " << errorMessage << std::endl;
-    return ErrorPacket(errorCode, errorMessage);
+    return ErrorPacket(errorCode, errorMessage, addr);
 }
 
 // Serialize method for TFTPErrorPacket
@@ -666,16 +689,18 @@ std::vector<char> ErrorPacket::serialize() const {
     return buffer;
 }
 
-void ErrorPacket::handleClient(ClientSession& session) const {
-    session.sessionState = SessionState::ERROR;
+void ErrorPacket::handleClient(ClientSession* session) const {
+    session->sessionState = SessionState::ERROR;
 }
 
-void ErrorPacket::handleServer(ServerSession& session) const {
-    session.sessionState = SessionState::ERROR;
+void ErrorPacket::handleServer(ServerSession* session) const {
+    session->sessionState = SessionState::ERROR;
 }
 
-OACKPacket::OACKPacket(std::map<std::string, uint64_t> options)
-    : options(options) {}
+OACKPacket::OACKPacket(std::map<std::string, uint64_t> options, sockaddr_in addr)
+    : options(options) {
+        this->addr = addr;
+    }
 
 
 
@@ -746,20 +771,20 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
     }
 
     std::cerr << "OACK " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << optMessage << std::endl;
-    return OACKPacket(options);
+    return OACKPacket(options, addr);
 }
 
-void OACKPacket::handleClient(ClientSession& session) const {
-    if (session.sessionState == SessionState::WAITING_OACK){
+void OACKPacket::handleClient(ClientSession* session) const {
+    if (session->sessionState == SessionState::WAITING_OACK){
         for (const auto& option : options) {
-            if (session.options.find(option.first) == session.options.end()) {
-                ErrorPacket errorPacket(8, "Unknown transfer option");
-                errorPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::ERROR;
+            if (session->options.find(option.first) == session->options.end()) {
+                ErrorPacket errorPacket(8, "Unknown transfer option", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
             }
         }
-        session.setOptions(options);
-        switch(session.sessionType){
+        session->setOptions(options);
+        switch(session->sessionType){
             case SessionType::READ:
             {
                 // if tsize option is set check if there is enough space on disk
@@ -767,47 +792,47 @@ void OACKPacket::handleClient(ClientSession& session) const {
                     struct statvfs stat;
                     if (statvfs("/", &stat) != 0) {
                         // Error occurred getting filesystem stats
-                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                        errorPacket.send(session.sessionSockfd, session.dst_addr);
+                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                        errorPacket.send(session, session->sessionSockfd);
                         return;
                     }
 
                     uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
                     if (freeSpace < options.at("tsize")) {
                         // Not enough disk space
-                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded");
-                        errorPacket.send(session.sessionSockfd, session.dst_addr);
+                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                        errorPacket.send(session, session->sessionSockfd);
                         return;
                     }
                 }
-                ACKPacket ackPacket(0);
-                ackPacket.send(session.sessionSockfd, session.dst_addr);
-                session.sessionState = SessionState::WAITING_DATA;
+                ACKPacket ackPacket(0, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::WAITING_DATA;
                 break;
             }
             case SessionType::WRITE:
             {
-                session.blockNumber++;
-                std::vector<char> data = session.readDataBlock();
-                DataPacket dataPacket(session.blockNumber, data);
-                dataPacket.send(session.sessionSockfd, session.dst_addr);
-                if (data.size() < session.blockSize){
-                    session.sessionState = SessionState::WAITING_LAST_ACK;
+                session->blockNumber++;
+                std::vector<char> data = session->readDataBlock();
+                DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+                dataPacket.send(session, session->sessionSockfd);
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::WAITING_LAST_ACK;
                     break;
                 }
-                session.sessionState = SessionState::WAITING_ACK;
+                session->sessionState = SessionState::WAITING_ACK;
                 break;
             }
         }
     } else {
-        ErrorPacket errorPacket(4, "Illegal TFTP operation");
-        errorPacket.send(session.sessionSockfd, session.dst_addr);
-        session.sessionState = SessionState::ERROR;
+        ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+        errorPacket.send(session, session->sessionSockfd);
+        session->sessionState = SessionState::ERROR;
     }
 }
 
-void OACKPacket::handleServer(ServerSession& session) const {
-    ErrorPacket errorPacket(4, "Illegal TFTP operation");
-    errorPacket.send(session.sessionSockfd, session.dst_addr);
-    session.sessionState = SessionState::ERROR;
+void OACKPacket::handleServer(ServerSession* session) const {
+    ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+    errorPacket.send(session, session->sessionSockfd);
+    session->sessionState = SessionState::ERROR;
 }

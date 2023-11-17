@@ -55,6 +55,7 @@ void TFTPClient::upload(std::string dest_filepath) {
 
     std::map<std::string, uint64_t> options;
     options["blksize"] = 20;
+    options["timeout"] = 30;
 
     std::ostringstream ss;
     ss << std::cin.rdbuf();
@@ -63,14 +64,14 @@ void TFTPClient::upload(std::string dest_filepath) {
 
     std::istringstream iss(stdinData);
     std::cin.rdbuf(iss.rdbuf());
-
-    WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options); // Create an ACK packet with block number 0
-    packet.send(sockfd, server_addr);
-
-
+    
     struct sockaddr_in from_addr;
 
     ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE, options);
+
+    WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options, server_addr); // Create an ACK packet with block number 0
+    packet.send(&session, sockfd);
+
     session.handleSession();
 }
 
@@ -100,11 +101,10 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     options["blksize"] = 20;
     options["tsize"] = 0; // 0 means we don't know the size of the file yet
 
-    ReadRequestPacket packet(filepath, DataMode::OCTET, options);
-    packet.send(sockfd, server_addr);
-
     struct sockaddr_in from_addr;
-
     ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
+    ReadRequestPacket packet(filepath, DataMode::OCTET, options, server_addr);
+    packet.send(&session, sockfd);
+
     session.handleSession();
 }
