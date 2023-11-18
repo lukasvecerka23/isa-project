@@ -8,6 +8,12 @@
 #define MIN_BLOCK_SIZE 8
 #define MIN_TIMEOUT 1
 #define MIN_TSIZE 0
+#define INITIAL_TIMEOUT 5
+#define INITIAL_BLOCK_SIZE 512
+#define INITIAL_TSIZE 0
+#define MAX_RETRIES 3
+#define BACKOFF_FACTOR 2
+
 
 #include <string>
 #include <netinet/in.h>
@@ -69,6 +75,8 @@ public:
     std::unique_ptr<Packet> lastPacket;
     void writeDataBlock(std::vector<char> data);
     void setTimeout();
+    bool hasEnoughSpace(uint64_t size);
+    bool openFileForWrite();
 };
 
 class ClientSession : public Session {
@@ -89,6 +97,9 @@ public:
     std::ifstream readStream;
     void exit();
     void setOptions();
+    bool handleWriteRequest();
+    bool handleReadRequest();
+    bool openFileForRead();
 };
 
 #endif 

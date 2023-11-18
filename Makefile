@@ -6,8 +6,8 @@ SRC_DIR := src
 INC_DIR := include
 BUILD_DIR := build
 
-CLIENT_TARGET := $(BUILD_DIR)/client/tftp-client
-SERVER_TARGET := $(BUILD_DIR)/server/tftp-server
+CLIENT_TARGET := tftp-client
+SERVER_TARGET := tftp-server
 
 COMMON_SRC := $(wildcard $(SRC_DIR)/common/*.cpp)
 COMMON_OBJ := $(patsubst $(SRC_DIR)/common/%.cpp,$(BUILD_DIR)/common/%.o,$(COMMON_SRC))
@@ -21,6 +21,15 @@ SERVER_OBJ := $(patsubst $(SRC_DIR)/server/%.cpp,$(BUILD_DIR)/server/%.o,$(SERVE
 .PHONY: all clean client server
 
 all: client server
+
+run_server: server
+	./$(SERVER_TARGET) ./server_dir
+
+run_client_download: client
+	./$(CLIENT_TARGET) -h localhost -p 69 -f $(SOURCE) -t $(DESTINATION)
+
+run_client_upload: client
+	./$(CLIENT_TARGET) -h localhost -p 69 -t $(DESTINATION) < $(SOURCE)
 
 client: $(CLIENT_TARGET)
 

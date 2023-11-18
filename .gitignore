@@ -34,3 +34,11 @@
 build/
 .vscode/
 .DS_Store
+tftp-client
+tftp-server
+*.png
+__pycache__/
+.pytest_cache/
+examples/
+*.sh
+server_dir/
