@@ -32,7 +32,16 @@ DataMode stringToMode(std::string value) {
     }
 }
 
+bool hasEnoughSpace(uint64_t size){
+    struct statvfs stat;
+    if (statvfs("/", &stat) != 0) {
+        // Error occurred getting filesystem stats
+        return false;
+    }
 
+    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
+    return freeSpace >= size;
+}
 
 Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
 : dst_addr(dst_addr),
@@ -51,16 +60,7 @@ fileOpen(false),
 retries(0),
 lastPacket(nullptr){}
 
-bool Session::hasEnoughSpace(uint64_t size){
-    struct statvfs stat;
-    if (statvfs("/", &stat) != 0) {
-        // Error occurred getting filesystem stats
-        return false;
-    }
 
-    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
-    return freeSpace >= size;
-}
 
 void Session::setTimeout(){
     struct timeval tv;

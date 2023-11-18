@@ -129,13 +129,8 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
         throw ParsingError("Buffer too short for WRQ packet");
     }
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
-    if (opcode != 2 && opcode != 1) { // 2 is the opcode for WRQ
-        throw ParsingError("Invalid opcode for request packet");
-    }
-
     const char* current = buffer + 2;
     const char* filenameEnd = std::find(current, buffer + bufferSize, '\0');
-
 
     std::string filename(current, filenameEnd);
     if (filename.empty() || filenameEnd == buffer + bufferSize) {
@@ -163,6 +158,12 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
         if (optionName.empty() || optionEnd == buffer + bufferSize) {
             throw OptionError("Invalid option name");
         }
+
+        // Check if the option already exists
+        if (options.find(optionName) != options.end()) {
+            throw OptionError("Option occurs multiple times");
+        }
+
         current = optionEnd + 1;
 
         const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
@@ -178,17 +179,17 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
             continue;
         }
 
-        // Check if the option already exists
-        if (options.find(optionName) != options.end()) {
-            throw OptionError("Option occurs multiple times");
-        }
-
         int optionValue;
         try{
             optionValue = std::stoi(optionValueStr);
         } catch (const std::exception& e){
             throw OptionError("Invalid option value");
         }
+
+        if (optionName == "tsize" && opcode == 1 && optionValue != 0){
+            throw OptionError("Transfer size for RRQ must be 0");
+        }
+
         options[optionName] = optionValue;
         
     }
@@ -196,6 +197,7 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
         throw OptionError("Invalid option values");
     }
 
+    
     if (opcode == 1){
         std::string message = "RRQ " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + filename + " " + modeStr + " " + optMessage;
         Logger::instance().error(message);
@@ -294,12 +296,6 @@ DataPacket DataPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
     if (bufferSize < 4){
         throw ParsingError("Buffer too short for DATA packet");
     }
-
-    uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
-    if (opcode != 3) { // 3 is the opcode for DATA
-        throw ParsingError("Invalid opcode for DATA packet");
-    }
-
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
     std::vector<char> data(buffer + 4, buffer + bufferSize);
     std::string message = "DATA " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + std::to_string(blockNumber);
@@ -322,8 +318,11 @@ std::vector<char> DataPacket::serialize() const {
 
 void DataPacket::handleClient(ClientSession* session) const {
     switch(session->sessionState){
+        // Client state: Client sent RRQ and waiting for first DATA packet, Received packet: DATA => normal operation
+        // if everything is okay, send ACK and write data to file
         case SessionState::INITIAL:
         {
+            // check if size of data in packet is greater than negotiated block size
             if (data.size() > session->blockSize){
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
                 errorPacket.send(session, session->sessionSockfd);
@@ -353,15 +352,20 @@ void DataPacket::handleClient(ClientSession* session) const {
             }
             break;
         }
+        // Client state: Waiting Data, Received packet: DATA => normal operation
+        // if everything is okay, send ACK and write data to file
         case SessionState::WAITING_DATA:
         {
+            // check if size of data in packet is greater than negotiated block size
             if (data.size() > session->blockSize){
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
                 errorPacket.send(session, session->sessionSockfd);
                 session->sessionState = SessionState::ERROR;
                 break;
             }
+            // check block number
             if (session->blockNumber == this->blockNumber){
+                // write to file
                 try {
                     session->writeDataBlock(data);
                 } catch (const std::exception& e) {
@@ -371,10 +375,13 @@ void DataPacket::handleClient(ClientSession* session) const {
                     break;
                 }
                 
+                // check if last packet
                 if (data.size() < session->blockSize){
                     session->writeStream.close();
                     session->sessionState = SessionState::RRQ_END;
                 }
+
+                // send ACK
                 ACKPacket ackPacket(session->blockNumber, session->dst_addr);
                 ackPacket.send(session, session->sessionSockfd);
                 session->blockNumber++;
@@ -385,15 +392,20 @@ void DataPacket::handleClient(ClientSession* session) const {
             }
             break;
         }
-        case SessionState::WAITING_OACK:
+        // Client state: Waiting on OACK, Received packet: DATA => server doesn't support options,
+        // if everything is okay, send ACK and write data to file
+        case SessionState::WAITING_OACK: 
         {
+            // check if size of data in packet is greater than negotiated block size
             if (data.size() > session->blockSize){
                 ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
                 errorPacket.send(session, session->sessionSockfd);
                 session->sessionState = SessionState::ERROR;
                 break;
             }
+            // check block number
             if (session->blockNumber == this->blockNumber){
+                // write to file
                 try{
                     session->writeDataBlock(data);
                 } catch (const std::exception& e) {
@@ -404,9 +416,12 @@ void DataPacket::handleClient(ClientSession* session) const {
                 }
                 session->sessionState = SessionState::WAITING_DATA;
                 
+                // check for last packet
                 if (data.size() < session->blockSize){
                     session->sessionState = SessionState::RRQ_END;
                 }
+
+                // send ACK
                 ACKPacket ackPacket(session->blockNumber, session->dst_addr);
                 ackPacket.send(session, session->sessionSockfd);
                 session->blockNumber++;
@@ -527,11 +542,6 @@ std::vector<char> ACKPacket::serialize() const {
 ACKPacket ACKPacket::parse(sockaddr_in addr, const char* buffer, size_t bufferSize) {
     if (bufferSize != 4) {
         throw ParsingError("Buffer size for ACK packet must be 4");
-    }
-
-    uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
-    if (opcode != 4) { // 4 is the opcode for ACK
-        throw ParsingError("Invalid opcode for ACK packet");
     }
 
     uint16_t blockNumber = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
@@ -689,12 +699,10 @@ ErrorPacket ErrorPacket::parse(sockaddr_in addr, const char* buffer, size_t buff
         throw ParsingError("Buffer too short for ERROR packet");
     }
 
-    uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
-    if (opcode != 5) { // 4 is the opcode for ACK
-        throw ParsingError("Invalid opcode for ACK packet");
-    }
-
     uint16_t errorCode = (static_cast<uint8_t>(buffer[2]) << 8) | static_cast<uint8_t>(buffer[3]);
+    if (errorCode < 0 || errorCode > 8) {
+        throw ParsingError("Invalid error code");
+    }
     const char* errorMessageEnd = std::find(buffer + 4, buffer + bufferSize, '\0');
     std::string errorMessage(buffer + 4, errorMessageEnd);
     if (errorMessageEnd == buffer + bufferSize) {
@@ -722,7 +730,8 @@ std::vector<char> ErrorPacket::serialize() const {
 
 void ErrorPacket::handleClient(ClientSession* session) const {
     if (session->sessionState == SessionState::WAITING_OACK){
-        // Create a new request packet without options
+        // Client is waiting on OACK packet but received an error packet
+        // So client will resend the request packet with cleared options
         auto requestPacket = dynamic_cast<RequestPacket*>(session->lastPacket.get());
         if (requestPacket) {
             requestPacket->options.clear();  // Clear the options
@@ -775,21 +784,28 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
     }
 
     uint16_t opcode = (static_cast<uint8_t>(buffer[0]) << 8) | static_cast<uint8_t>(buffer[1]);
-    if (opcode != 6) { // 4 is the opcode for ACK
-        throw ParsingError("Invalid opcode for ACK packet");
+    if (opcode != 6) { // 6 is the opcode for OACK
+        throw ParsingError("Invalid opcode for OACK packet");
     }
 
     const char* current = buffer + 2;
-
 
     std::map<std::string, uint64_t> options;
     std::string optMessage = "";
     while (current < buffer + bufferSize) {
         const char* optionEnd = std::find(current, buffer + bufferSize, '\0');
         std::string optionName(current, optionEnd);
+
+        std::transform(optionName.begin(), optionName.end(), optionName.begin(), ::tolower);
+
         if (optionName.empty() || optionEnd == buffer + bufferSize) {
             throw OptionError("Invalid option name");
         }
+        // Check if the option already exists
+        if (options.find(optionName) != options.end()) {
+            throw OptionError("Option occurs multiple times");
+        }
+
         current = optionEnd + 1;
 
         const char* valueEnd = std::find(current, buffer + bufferSize, '\0');
@@ -804,6 +820,7 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
         if (RequestPacket::supportedOptions.find(optionName) == RequestPacket::supportedOptions.end()) {
             continue;
         }
+
         int optionValue;
         try{
             optionValue = std::stoi(optionValueStr);
@@ -814,7 +831,7 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
     }
 
     if (!checkOptions(options)){
-        throw OptionError("Invalid option values");
+        throw OptionError("One of the options has an invalid value");
     }
     std::string message = "OACK " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + optMessage;
     Logger::instance().error(message);
@@ -823,6 +840,7 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
 
 void OACKPacket::handleClient(ClientSession* session) const {
     if (session->sessionState == SessionState::WAITING_OACK){
+        // Check if options matches requested options
         for (const auto& option : options) {
             if (session->options.find(option.first) == session->options.end()) {
                 ErrorPacket errorPacket(8, "Unknown transfer option", session->dst_addr);
@@ -836,19 +854,10 @@ void OACKPacket::handleClient(ClientSession* session) const {
             {
                 // if tsize option is set check if there is enough space on disk
                 if (options.find("tsize") != options.end()){
-                    struct statvfs stat;
-                    if (statvfs("/", &stat) != 0) {
-                        // Error occurred getting filesystem stats
+                    if (!hasEnoughSpace(options.at("tsize"))){
                         ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
                         errorPacket.send(session, session->sessionSockfd);
-                        return;
-                    }
-
-                    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
-                    if (freeSpace < options.at("tsize")) {
-                        // Not enough disk space
-                        ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
-                        errorPacket.send(session, session->sessionSockfd);
+                        session->sessionState = SessionState::ERROR;
                         return;
                     }
                 }

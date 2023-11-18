@@ -40,6 +40,7 @@ wrong_rrq_wrq_test_cases = [
         (b'\x00\x04test\x00octet\x00', 4), # Wrong opcode
         (b'\x00\x05test\x00octet\x00', 4), # Wrong opcode
         (b'\x00\x06test\x00octet\x00', 4), # Wrong opcode
+        (b'\x00\x05\x00\x09\00', 4), # Wrong error code
         (b'\x00\x01test\x00octet\x00blksize\x00', 8),  # Missing value for blksize option
         (b'\x00\x01test\x00octet\x00blksize\x001024', 8),  # Missing null byte after blksize value
         (b'\x00\x01test\x00octet\x00blksize\x001024\x00timeout\x00', 8),  # Missing value for timeout option
@@ -56,6 +57,7 @@ wrong_rrq_wrq_test_cases = [
         (b'\x00\x01test\x00octet\x00tsize\x0099999999999999999999999999999\x00', 8), # Tsize too big
         (b'\x00\x01test/filename\x00octet\x00', 1), # Filename with subdirectory
         (b'\x00\x01test\x00octet\x00blksize\x001024\x00blksize\x0030', 8),  # Duplicate blksize option
+        (b'\x00\x01test\x00octet\x00tsize\x0030\x00', 8)
     ]
 
 @pytest.mark.parametrize('data, expected_error_code', wrong_rrq_wrq_test_cases)
@@ -90,11 +92,11 @@ def test_correct_rrq_wrq(data, expected_opcode):
 correct_options_test_cases = [
     (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00', 6),  # RRQ for 'test' in octet mode with blksize option
     (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00' + b'timeout\x0030\x00', 6),  # RRQ for 'test' in octet mode with blksize and timeout options
-    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00' + b'timeout\x0030\x00' + b'tsize\x0010000\x00', 6),  # RRQ for 'test' in octet mode with blksize, timeout and tsize options
-    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00' + b'timeout\x0030\x00' + b'tsize\x0010000\x00' + b'option\x00value\x00', 6),  # RRQ for 'test' in octet mode with blksize, timeout, tsize and unknown options
-    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'BLKSIZE\x001024\x00', 6),  # WRQ for 'test' in octet mode with BLKSIZE option
-    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TIMEOUT\x00255\x00', 6),  # WRQ for 'test' in octet mode with TIMEOUT option
-    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TSIZE\x0010000\x00', 6),  # WRQ for 'test' in octet mode with TSIZE option
+    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00' + b'timeout\x0030\x00' + b'tsize\x000\x00', 6),  # RRQ for 'test' in octet mode with blksize, timeout and tsize options
+    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'blksize\x001024\x00' + b'timeout\x0030\x00' + b'tsize\x000\x00' + b'option\x00value\x00', 6),  # RRQ for 'test' in octet mode with blksize, timeout, tsize and unknown options
+    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'BLKSIZE\x001024\x00', 6),  # RRQ for 'test' in octet mode with BLKSIZE option
+    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TIMEOUT\x00255\x00', 6),  # RRQ for 'test' in octet mode with TIMEOUT option
+    (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TSIZE\x000\x00', 6),  # RRQ for 'test' in octet mode with TSIZE option
 ]
 
 @pytest.mark.parametrize('data,expected_opcode', correct_options_test_cases)

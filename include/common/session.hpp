@@ -33,6 +33,8 @@ std::string modeToString(DataMode value);
 
 DataMode stringToMode(std::string value);
 
+bool hasEnoughSpace(uint64_t size);
+
 enum class SessionType {
     READ,
     WRITE
@@ -75,7 +77,6 @@ public:
     std::unique_ptr<Packet> lastPacket;
     void writeDataBlock(std::vector<char> data);
     void setTimeout();
-    bool hasEnoughSpace(uint64_t size);
     bool openFileForWrite();
 };
 
