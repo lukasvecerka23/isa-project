@@ -50,6 +50,7 @@ sessionSockfd(socket),
 blockNumber(0),
 blockSize(INITIAL_BLOCK_SIZE),
 timeout(INITIAL_TIMEOUT),
+initialTimeout(INITIAL_TIMEOUT),
 tsize(INITIAL_TSIZE),
 dataMode(dataMode),
 sessionType(sessionType),
@@ -58,7 +59,8 @@ dst_filename(dst_filename),
 sessionState(SessionState::INITIAL),
 fileOpen(false),
 retries(0),
-lastPacket(nullptr){}
+lastPacket(nullptr)
+{}
 
 
 
@@ -90,7 +92,7 @@ ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std:
     }
 
 void ClientSession::handleSession() {
-    setTimeout();
+    
     if (sessionType == SessionType::READ){
         if (!openFileForWrite()){
             Logger::instance().log("Failed to open file for writing");
@@ -115,6 +117,7 @@ void ClientSession::handleSession() {
             return;
         }
 
+        setTimeout();
         // Receive data from server
         ssize_t received_bytes = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
 
@@ -137,7 +140,6 @@ void ClientSession::handleSession() {
 
                 // Implement exponential backoff
                 timeout *= BACKOFF_FACTOR;
-                setTimeout();
                 continue;
             } else {
                 Logger::instance().log("Failed to receive data");
@@ -148,7 +150,7 @@ void ClientSession::handleSession() {
         }
         // Reset the number of retries
         retries = 0;
-        timeout = INITIAL_TIMEOUT;
+        timeout = initialTimeout;
 
         // First packet received, set the TID
         if (!TIDisSet){
@@ -280,6 +282,7 @@ void ClientSession::setOptions(std::map<std::string, uint64_t> newOptions){
     if (options.find("timeout") != options.end()) {
         // Set the timeout to its value
         Logger::instance().log("Setting timeout to " + std::to_string(options.at("timeout")));
+        this->initialTimeout = options.at("timeout");
         this->timeout = options.at("timeout");
     }
 
@@ -311,7 +314,6 @@ ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std:
     }
 
 void ServerSession::handleSession() {
-    setTimeout();
     char buffer[BUFFER_SIZE];
     if (sessionType == SessionType::WRITE){
         if (!handleWriteRequest()){
@@ -341,6 +343,7 @@ void ServerSession::handleSession() {
             return;
         }
 
+        setTimeout();
         // Receive data from client
         ssize_t received_bytes = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
 
@@ -357,12 +360,10 @@ void ServerSession::handleSession() {
 
                 Logger::instance().log("Timeout, retransmitting (attempt " + std::to_string(retries) + ").");
 
-                // Retransmit the last packet
                 lastPacket->send(this, sessionSockfd);
 
                 // Implement exponential backoff
                 timeout *= 2;
-                setTimeout();
                 continue;
             } else {
                 Logger::instance().log("Failed to receive data");
@@ -373,7 +374,7 @@ void ServerSession::handleSession() {
         }
         // Reset the number of retries
         retries = 0;
-        timeout = INITIAL_TIMEOUT;
+        timeout = initialTimeout;
 
         // Check if the TID matches
         int srcTID = ntohs(dst_addr.sin_port);
@@ -409,7 +410,7 @@ void ServerSession::handleSession() {
             return;
         }
 
-        // hanndle the packet
+        // handle the packet
         packet->handleServer(this);
 
         // Check if the session is finished
@@ -514,6 +515,7 @@ void ServerSession::setOptions(){
     if (options.find("timeout") != options.end()) {
         // Set the timeout to its value
         Logger::instance().log("Setting timeout to " + std::to_string(options.at("timeout")));
+        this->initialTimeout = options.at("timeout");
         this->timeout = options.at("timeout");
     }
 

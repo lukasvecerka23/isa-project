@@ -64,6 +64,7 @@ public:
     uint16_t blockNumber;
     uint16_t blockSize;
     int timeout;
+    int initialTimeout;
     uint64_t tsize;
     DataMode dataMode;
     SessionType sessionType;
