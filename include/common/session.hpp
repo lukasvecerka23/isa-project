@@ -34,6 +34,7 @@ enum class SessionType {
 enum class SessionState {
     INITIAL,
     WAITING_OACK,
+    WAITING_AFTER_OACK,
     WAITING_ACK,
     WAITING_LAST_ACK,
     WAITING_DATA,
@@ -85,6 +86,7 @@ public:
     std::vector<char> readDataBlock();
     std::ifstream readStream;
     void exit();
+    void setOptions();
 };
 
 #endif 

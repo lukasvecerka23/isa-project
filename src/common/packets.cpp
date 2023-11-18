@@ -107,7 +107,9 @@ void Packet::send(Session* session, int socket) {
     }
 
     if (session != nullptr){
-        session->lastPacket = createPacket(*this, this->getOpcode());
+        if (this->getOpcode() != 5){
+            session->lastPacket = createPacket(*this, this->getOpcode());    
+        }
     }
 }
 
@@ -313,7 +315,7 @@ ReadRequestPacket ReadRequestPacket::parse(sockaddr_in addr, const char* buffer,
     if (!checkOptions(options)){
         throw OptionError("Invalid option values");
     }
-    std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr << optMessage << std::endl;
+    std::cerr << "RRQ " << inet_ntoa(addr.sin_addr) << ":" << ntohs(addr.sin_port) << " " << filename << " " << modeStr  << " " << optMessage << std::endl;
     return ReadRequestPacket(filename, mode, options, addr);
 }
 
@@ -460,6 +462,33 @@ void DataPacket::handleServer(ServerSession* session) const {
     switch(session->sessionState){
         case SessionState::WAITING_DATA:
         {
+            if (session->blockNumber == this->blockNumber){
+                try{
+                    session->writeDataBlock(data);
+                } catch (const std::exception& e) {
+                    ErrorPacket errorPacket(3, "Disk full or allocation exceeded", session->dst_addr);
+                    errorPacket.send(session, session->sessionSockfd);
+                    session->sessionState = SessionState::ERROR;
+                    break;
+                }
+                
+                if (data.size() < session->blockSize){
+                    session->writeStream.close();
+                    session->sessionState = SessionState::WRQ_END;
+                }
+                ACKPacket ackPacket(session->blockNumber, session->dst_addr);
+                ackPacket.send(session, session->sessionSockfd);
+                session->blockNumber++;
+            } else {
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
+            }
+            break;
+        }
+        case SessionState::WAITING_AFTER_OACK:
+        {
+            session->setOptions();
             if (session->blockNumber == this->blockNumber){
                 try{
                     session->writeDataBlock(data);
@@ -632,6 +661,26 @@ void ACKPacket::handleServer(ServerSession* session) const {
             }
             break;
         }
+        case SessionState::WAITING_AFTER_OACK:
+        {
+            session->setOptions();
+            if (session->blockNumber == this->blockNumber){
+                session->blockNumber++;
+                std::vector<char> data = session->readDataBlock();
+                DataPacket dataPacket(session->blockNumber, data, session->dst_addr);
+                dataPacket.send(session, session->sessionSockfd);
+                if (data.size() < session->blockSize){
+                    session->sessionState = SessionState::WAITING_LAST_ACK;
+                    break;
+                }
+                session->sessionState = SessionState::WAITING_ACK;
+            } else {
+                ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
+                errorPacket.send(session, session->sessionSockfd);
+                session->sessionState = SessionState::ERROR;
+            }
+            break;
+        }
         default:
         {
             ErrorPacket errorPacket(4, "Illegal TFTP operation", session->dst_addr);
@@ -687,7 +736,22 @@ std::vector<char> ErrorPacket::serialize() const {
 }
 
 void ErrorPacket::handleClient(ClientSession* session) const {
-    session->sessionState = SessionState::ERROR;
+    if (session->sessionState == SessionState::WAITING_OACK){
+        // Create a new request packet without options
+        auto requestPacket = dynamic_cast<RequestPacket*>(session->lastPacket.get());
+        if (requestPacket) {
+            requestPacket->options.clear();  // Clear the options
+            requestPacket->send(session, session->sessionSockfd); // Resend the request packet
+            session->TIDisSet = false;
+        }
+        if (session->sessionType == SessionType::READ){
+            session->sessionState = SessionState::WAITING_DATA;
+        } else {
+            session->sessionState = SessionState::WAITING_ACK;
+        }
+    } else {
+        session->sessionState = SessionState::ERROR;
+    }
 }
 
 void ErrorPacket::handleServer(ServerSession* session) const {

@@ -91,7 +91,7 @@ void ClientSession::handleSession() {
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Timeout occurred
-                if (++retries > 5) {
+                if (++retries > 3) {
                     std::cout << "Max retries reached, giving up." << std::endl;
                     this->exit();
                     return;
@@ -255,27 +255,6 @@ void ClientSession::exit(){
 ServerSession::ServerSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options)
     : Session(socket, dst_addr, src_filename, dst_filename, dataMode, sessionType) {
         this->options = options;
-
-        // Check if the options map contains the "blksize" option
-        if (options.find("blksize") != options.end()) {
-            // Set the blockSize member variable to its value
-            std::cout << "Setting block size to " << options.at("blksize") << std::endl;
-            this->blockSize = options.at("blksize");
-        }
-
-        // Check if the options map contains the "timeout" option
-        if (options.find("timeout") != options.end()) {
-            // Set the timeout to its value
-            std::cout << "Setting timeout to " << options.at("timeout") << std::endl;
-            this->timeout = options.at("timeout");
-        }
-
-        // Check if the options map contains the "tsize" option
-        if (options.find("tsize") != options.end()) {
-            // Set the tsize to its value
-            std::cout << "Setting tsize to " << options.at("tsize") << std::endl;
-            this->tsize = options.at("tsize");
-        }
     }
 
 void ServerSession::handleSession() {
@@ -318,7 +297,7 @@ void ServerSession::handleSession() {
             OACKPacket oackPacket(options, dst_addr);
             oackPacket.send(this, sessionSockfd);
             blockNumber = 1;
-            sessionState = SessionState::WAITING_DATA;
+            sessionState = SessionState::WAITING_AFTER_OACK;
         }
     } else if (sessionType == SessionType::READ){
         std::cout << "Opening file on server: " << src_filename << std::endl;
@@ -374,7 +353,7 @@ void ServerSession::handleSession() {
         } else {
             OACKPacket oackPacket(options, dst_addr);
             oackPacket.send(this, sessionSockfd);
-            sessionState = SessionState::WAITING_ACK;
+            sessionState = SessionState::WAITING_AFTER_OACK;
         }
     }
     socklen_t dst_len = sizeof(dst_addr);
@@ -390,7 +369,7 @@ void ServerSession::handleSession() {
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Timeout occurred
-                if (++retries > 5) {
+                if (++retries > 3) {
                     std::cout << "Max retries reached, giving up." << std::endl;
                     this->exit();
                     return;
@@ -443,6 +422,29 @@ void ServerSession::handleSession() {
             this->exit();
             return;
         }
+    }
+}
+
+void ServerSession::setOptions(){
+        // Check if the options map contains the "blksize" option
+    if (options.find("blksize") != options.end()) {
+        // Set the blockSize member variable to its value
+        std::cout << "Setting block size to " << options.at("blksize") << std::endl;
+        this->blockSize = options.at("blksize");
+    }
+
+    // Check if the options map contains the "timeout" option
+    if (options.find("timeout") != options.end()) {
+        // Set the timeout to its value
+        std::cout << "Setting timeout to " << options.at("timeout") << std::endl;
+        this->timeout = options.at("timeout");
+    }
+
+    // Check if the options map contains the "tsize" option
+    if (options.find("tsize") != options.end()) {
+        // Set the tsize to its value
+        std::cout << "Setting tsize to " << options.at("tsize") << std::endl;
+        this->tsize = options.at("tsize");
     }
 }
 
