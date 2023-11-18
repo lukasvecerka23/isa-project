@@ -32,15 +32,7 @@ DataMode stringToMode(std::string value) {
     }
 }
 
-void Session::setTimeout(){
-    struct timeval tv;
-    tv.tv_sec = timeout;
-    tv.tv_usec = 0;
-    if (setsockopt(sessionSockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
-        Logger::instance().log("Failed to set timeout");
-        return;
-    }
-}
+
 
 Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType)
 : dst_addr(dst_addr),
@@ -68,6 +60,16 @@ bool Session::hasEnoughSpace(uint64_t size){
 
     uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
     return freeSpace >= size;
+}
+
+void Session::setTimeout(){
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sessionSockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
+        Logger::instance().log("Failed to set timeout");
+        return;
+    }
 }
 
 bool Session::openFileForWrite(){
@@ -106,15 +108,21 @@ void ClientSession::handleSession() {
     char buffer[BUFFER_SIZE];
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
+        // SIGINT termination
         if(stopFlagClient->load()){
             sessionState = SessionState::ERROR;
             this->exit();
             return;
         }
-        ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
-        if (n < 0) {
+
+        // Receive data from server
+        ssize_t received_bytes = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
+
+
+        if (received_bytes < 0) {
+            // Timeouted
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Timeout occurred
+                // Check if the number of retries is exceeded
                 if (++retries > MAX_RETRIES) {
                     Logger::instance().log("Max retries reached, giving up.");
                     sessionState = SessionState::ERROR;
@@ -125,7 +133,6 @@ void ClientSession::handleSession() {
                 Logger::instance().log("Timeout, retransmitting (attempt " + std::to_string(retries) + ").");
 
                 // Retransmit the last packet
-                // (Assuming lastPacket is a function to resend the last packet)
                 lastPacket->send(this, sessionSockfd);
 
                 // Implement exponential backoff
@@ -139,15 +146,17 @@ void ClientSession::handleSession() {
                 return;
             }
         }
-
+        // Reset the number of retries
         retries = 0;
         timeout = INITIAL_TIMEOUT;
 
+        // First packet received, set the TID
         if (!TIDisSet){
             this->srcTID = ntohs(dst_addr.sin_port);
             TIDisSet = true;
         }
 
+        // Check if the TID matches
         int srcTID = ntohs(dst_addr.sin_port);
         if (srcTID != this->srcTID){
             ErrorPacket errorPacket(5, "Unknown transfer ID", dst_addr);
@@ -155,9 +164,10 @@ void ClientSession::handleSession() {
             continue;
         }
 
+        // Try to parse the packet
         std::unique_ptr<Packet> packet;
         try {
-            packet = Packet::parse(dst_addr, buffer, n);
+            packet = Packet::parse(dst_addr, buffer, received_bytes);
         } catch (const ParsingError& e) {
             ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
@@ -180,7 +190,10 @@ void ClientSession::handleSession() {
             return;
         }
 
+        // hanndle the packet
         packet->handleClient(this);
+
+        // Check if the session is finished
         if (sessionState == SessionState::RRQ_END || sessionState == SessionState::WRQ_END || sessionState == SessionState::ERROR){
             this->exit();
             return;
@@ -539,8 +552,3 @@ void ServerSession::exit(){
     readStream.close();
     close(sessionSockfd);
 }
-
-
-    
-
-
