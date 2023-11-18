@@ -1,7 +1,6 @@
 // tftp_server.cpp
 #include "client/tftp_client.hpp"
 #include "common/packets.hpp"
-#include "common/session.hpp"
 #include <iostream>
 #include <sstream>
 #include <cstring>
@@ -10,6 +9,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <unistd.h>
+#include "common/logger.hpp"
 
 TFTPClient::TFTPClient(std::string hostname, int port)
     : hostname(std::move(hostname)), port(port) {
@@ -33,8 +33,7 @@ TFTPClient::TFTPClient(std::string hostname, int port)
     }
 
 void TFTPClient::upload(std::string dest_filepath) {
-    std::cout << "Uploading file to " << hostname << ":" << port 
-              << " with destination filepath: " << dest_filepath << std::endl;
+    Logger::instance().log("Uploading file to " + hostname + ":" + std::to_string(port) + " with destination filepath: " + dest_filepath);
 
     // Initialize hints for getaddrinfo
     struct addrinfo hints, *res;
@@ -44,7 +43,7 @@ void TFTPClient::upload(std::string dest_filepath) {
 
     // Resolve hostname to IP address
     if (getaddrinfo(hostname.c_str(), nullptr, &hints, &res) != 0) {
-        std::cerr << "Could not resolve hostname\n";
+        Logger::instance().log("Could not resolve hostname");
         close(sockfd);
         return;
     }
@@ -54,16 +53,6 @@ void TFTPClient::upload(std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksize"] = 20;
-    options["timeout"] = 30;
-
-    std::ostringstream ss;
-    ss << std::cin.rdbuf();
-    std::string stdinData = ss.str();
-    options["tsize"] = stdinData.size();
-
-    std::istringstream iss(stdinData);
-    std::cin.rdbuf(iss.rdbuf());
     
     struct sockaddr_in from_addr;
 
@@ -76,9 +65,7 @@ void TFTPClient::upload(std::string dest_filepath) {
 }
 
 void TFTPClient::download(std::string filepath, std::string dest_filepath) {
-    std::cout << "Downloading file from " << hostname << ":" << port 
-              << " with filepath: " << filepath 
-              << " to destination filepath: " << dest_filepath << std::endl;
+    Logger::instance().log("Downloading file from " + hostname + ":" + std::to_string(port) + " with filepath: " + filepath + " to destination filepath: " + dest_filepath);
 
     // Initialize hints for getaddrinfo
     struct addrinfo hints, *res;
@@ -88,7 +75,7 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
 
     // Resolve hostname to IP address
     if (getaddrinfo(hostname.c_str(), nullptr, &hints, &res) != 0) {
-        std::cerr << "Could not resolve hostname\n";
+        Logger::instance().log("Could not resolve hostname");
         close(sockfd);
         return;
     }
@@ -98,7 +85,7 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     server_addr.sin_port = htons(port);
 
     std::map<std::string, uint64_t> options;
-    options["blksize"] = 7;
+    options["blksize"] = 20;
 
     struct sockaddr_in from_addr;
     ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);

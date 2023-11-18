@@ -62,7 +62,7 @@ public:
         if (stat(rootDirPath.c_str(), &st) == -1) {
             // Directory does not exist, attempt to create it
             if (mkdir(rootDirPath.c_str(), 0700) == -1) { // 0700 permissions - owner can read, write, and execute
-                std::cerr << "Failed to create directory: " << rootDirPath << std::endl;
+                std::cout << "Failed to create directory: " << rootDirPath << std::endl;
                 throw std::runtime_error("Failed to create directory");
             }
         }

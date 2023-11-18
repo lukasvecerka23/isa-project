@@ -15,7 +15,8 @@
 #include <fstream>
 #include <map>
 
-extern std::shared_ptr<std::atomic<bool>> stopFlag;
+extern std::shared_ptr<std::atomic<bool>> stopFlagServer;
+extern std::shared_ptr<std::atomic<bool>> stopFlagClient;
 
 enum class DataMode {
     NETASCII,
@@ -62,6 +63,7 @@ public:
     std::string dst_filename;
     SessionState sessionState;
     std::ofstream writeStream;
+    bool fileOpen;
     std::map<std::string, uint64_t> options;
     int retries;
     std::unique_ptr<Packet> lastPacket;

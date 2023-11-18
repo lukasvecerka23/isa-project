@@ -3,6 +3,7 @@
 #include "common/packets.hpp"
 #include "common/session.hpp"
 #include "common/exceptions.hpp"
+#include "common/logger.hpp"
 #include <filesystem>
 #include <iostream>
 #include <cstring>
@@ -34,8 +35,7 @@ int bind_new_socket(){
     tv.tv_sec = 5;
     tv.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        std::cout << "tady" << std::endl;
-        std::cout << "Error setting socket options: " << strerror(errno) << std::endl;
+        Logger::instance().log("Error setting socket options: " + std::string(strerror(errno)));
     }
 
     return sockfd;
@@ -45,8 +45,9 @@ void TFTPServer::shutDown() {
     // Wait for all client threads to finish
     for (auto& future : clientFutures) {
         if (future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout) {
+            Logger::instance().log("Waiting for client session to terminate...");
             future.get(); // This will block until the future is ready
-            std::cout << "Client session terminated from SIGINT" << std::endl;
+            Logger::instance().log("Client session terminated");
         }
     }
 
@@ -59,7 +60,7 @@ void TFTPServer::shutDown() {
 }
 
 void TFTPServer::start() {
-    std::cout << "Server listening on port " << port << std::endl;
+    Logger::instance().log("Server listening on port " + std::to_string(port));
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     char buffer[BUFFER_SIZE];
@@ -69,8 +70,8 @@ void TFTPServer::start() {
         ssize_t received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0,
                                           (struct sockaddr *)&client_addr, &client_len);
         if (received_bytes < 0) {
-            if (stopFlag->load()){
-                std::cout << "Stopping server..." << std::endl;
+            if (stopFlagServer->load()){
+                Logger::instance().log("Stopping server...");
                 shutDown();
                return;
             }

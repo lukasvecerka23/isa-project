@@ -54,7 +54,8 @@ wrong_rrq_wrq_test_cases = [
         (b'\x00\x01test\x00octet\x00blksize\x0065467\x00', 8), # Block size too big
         (b'\x00\x01test\x00octet\x00tsize\x00-1\x00', 8), # Tsize under 0
         (b'\x00\x01test\x00octet\x00tsize\x0099999999999999999999999999999\x00', 8), # Tsize too big
-        (b'\x00\x01test/filename\x00octet\x00', 1) # Filename with subdirectory
+        (b'\x00\x01test/filename\x00octet\x00', 1), # Filename with subdirectory
+        (b'\x00\x01test\x00octet\x00blksize\x001024\x00blksize\x0030', 8),  # Duplicate blksize option
     ]
 
 @pytest.mark.parametrize('data, expected_error_code', wrong_rrq_wrq_test_cases)
@@ -268,3 +269,21 @@ def test_timeout_option():
         send_ack(sock, block_number, next_address)
 
         exit_test(sock, next_address)
+
+def test_exceed_blksize_option():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        initial_data = b'\x00\x02' + b'newtest\x00' + b'octet\x00' + b'blksize\x0010\x00'
+        sock.sendto(initial_data, server_address)
+        data, next_address = sock.recvfrom(1024)
+
+        opcode = struct.unpack('!H', data[:2])[0]
+        assert opcode == 6
+
+        # send data which has size more than blksize
+        data = b'\x00\x03\x00\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01'
+        sock.sendto(data, next_address)
+
+        data, _ = sock.recvfrom(1024)
+        opcode, block_number = struct.unpack('!HH', data[:4])
+        assert opcode == 5
+        assert block_number == 4

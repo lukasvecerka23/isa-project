@@ -3,7 +3,17 @@
 #include <string>
 #include <getopt.h>
 #include "client/tftp_client.hpp"
+#include <csignal>
+#include "common/logger.hpp"
 // include other necessary headers
+
+void signalHandler(int signal) {
+    Logger::instance().log("Client is going to stop...");
+    if (signal == SIGINT){
+        stopFlagClient->store(true);
+    }
+    
+}
 
 // Define the long options
 static struct option long_options[] = {
@@ -31,7 +41,7 @@ int main(int argc, char* argv[]) {
             case 'p':
                 port = std::stoi(optarg);
                 if (port <= 0) {
-                    std::cerr << "Invalid port number.\n";
+                    Logger::instance().log("Invalid port number.");
                     return 1;
                 }
                 break;
@@ -50,9 +60,11 @@ int main(int argc, char* argv[]) {
     }
 
     if (hostname.empty() || dest_filepath.empty()) {
-        std::cerr << "Usage: " << argv[0] << " -h hostname [-p port] [-f filepath] -t dest_filepath\n";
+        Logger::instance().log("Usage: " + std::string(argv[0]) + " -h hostname [-p port] [-f filepath] -t dest_filepath");
         return 1;
     }
+
+    std::signal(SIGINT, signalHandler);
 
     try {
         TFTPClient client(hostname, port); // Create an instance of the TFTPClient with the given host and port
@@ -66,7 +78,7 @@ int main(int argc, char* argv[]) {
             client.download(filepath, dest_filepath);
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        Logger::instance().log("Failed to start TFTP client: " + std::string(e.what()));
         return 1;
     }
 

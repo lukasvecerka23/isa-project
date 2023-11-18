@@ -4,14 +4,15 @@
 #include <getopt.h>
 #include "server/tftp_server.hpp"
 #include "common/session.hpp"
+#include "common/logger.hpp"
 #include <csignal>
 
 // include other necessary headers
 
 void signalHandler(int signal) {
-    std::cout << "Server is going to stop..." << std::endl;
+    Logger::instance().log("Server is going to stop...");
     if (signal == SIGINT){
-        stopFlag->store(true);
+        stopFlagServer->store(true);
     }
     
 }
@@ -33,7 +34,7 @@ int main(int argc, char* argv[]) {
             case 'p':
                 port = std::stoi(optarg);
                 if (port <= 0 || port > 65535) {
-                    std::cerr << "Invalid port number.\n";
+                    Logger::instance().log("Invalid port number.");
                     return 1;
                 }
                 break;
@@ -48,9 +49,9 @@ int main(int argc, char* argv[]) {
     // It should be the last argument after the options
     if (optind < argc) {
         root_dirpath = argv[optind];
-        std::cout << "Root directory path: " << root_dirpath << std::endl;
+        Logger::instance().log("Root directory path: " + root_dirpath);
     } else {
-        std::cerr << "Usage: " << argv[0] << " [-p port] root_dirpath\n";
+        Logger ::instance().log("Usage: " + std::string(argv[0]) + " [-p port] root_dirpath");
         return 1;
     }
 
@@ -62,7 +63,7 @@ int main(int argc, char* argv[]) {
         TFTPServer& tftpServer = TFTPServer::getInstance();
         tftpServer.start();
     } catch (const std::exception& e) {
-        std::cerr << "Failed to start TFTP server: " << e.what() << std::endl;
+        Logger::instance().log("Failed to start TFTP server: " + std::string(e.what()));
         return 1;
     }
 

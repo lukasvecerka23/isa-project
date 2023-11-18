@@ -4,6 +4,7 @@
 #define BUFFER_SIZE 65507
 
 #include <string>
+#include "common/session.hpp"
 
 class TFTPClient {
 public:

@@ -1,6 +1,7 @@
 #include "common/session.hpp"
 #include "common/packets.hpp"
 #include "common/exceptions.hpp"
+#include "common/logger.hpp"
 #include <sys/statvfs.h>
 #include <iostream>
 #include <fstream>
@@ -8,7 +9,8 @@
 #include <unistd.h>
 
 // Define stopFlag
-std::shared_ptr<std::atomic<bool>> stopFlag = std::make_shared<std::atomic<bool>>(false);
+std::shared_ptr<std::atomic<bool>> stopFlagServer = std::make_shared<std::atomic<bool>>(false);
+std::shared_ptr<std::atomic<bool>> stopFlagClient = std::make_shared<std::atomic<bool>>(false);
 
 std::string modeToString(DataMode value) {
     switch (value) {
@@ -35,7 +37,7 @@ void Session::setTimeout(){
     tv.tv_sec = timeout;
     tv.tv_usec = 0;
     if (setsockopt(sessionSockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
-        std::cerr << "Failed to set timeout\n";
+        Logger::instance().log("Failed to set timeout");
         return;
     }
 }
@@ -54,6 +56,8 @@ Session::Session(int socket, const sockaddr_in& dst_addr, const std::string src_
     this->sessionState = SessionState::INITIAL;
     this->timeout = 5;
     this->retries = 0;
+    this->fileOpen = false;
+    this->tsize = 0;
 }
 
 ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std::string src_filename, const std::string dst_filename, DataMode dataMode, SessionType sessionType, std::map<std::string, uint64_t> options)
@@ -65,11 +69,13 @@ ClientSession::ClientSession(int socket, const sockaddr_in& dst_addr, const std:
 void ClientSession::handleSession() {
     setTimeout();
     if (sessionType == SessionType::READ){
-        std::cout << "Opening file on client: " << dst_filename << std::endl;
+        Logger::instance().log("Opening file on client: " + dst_filename);
         this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
         if (!writeStream.is_open()) {
-            std::cout << "Failed to open file: " << dst_filename << std::endl;
+            Logger::instance().log("Failed to open file: " + dst_filename);
             return;
+        } else {
+            fileOpen = true;
         }
         blockNumber = 1;
     }
@@ -80,11 +86,9 @@ void ClientSession::handleSession() {
     char buffer[BUFFER_SIZE];
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
-        if(stopFlag->load()){
-            ErrorPacket errorPacket(0, "Server shutdown", dst_addr);
-            errorPacket.send(this, sessionSockfd);
+        if(stopFlagClient->load()){
+            sessionState = SessionState::ERROR;
             this->exit();
-            std::cout << "Server is shutting down exiting client session" << std::endl;
             return;
         }
         ssize_t n = recvfrom(sessionSockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&dst_addr, &dst_len);
@@ -92,12 +96,13 @@ void ClientSession::handleSession() {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Timeout occurred
                 if (++retries > 3) {
-                    std::cout << "Max retries reached, giving up." << std::endl;
+                    Logger::instance().log("Max retries reached, giving up.");
+                    sessionState = SessionState::ERROR;
                     this->exit();
                     return;
                 }
 
-                std::cout << "Timeout, retransmitting (attempt " << retries << ")." << std::endl;
+                Logger::instance().log("Timeout, retransmitting (attempt " + std::to_string(retries) + ").");
 
                 // Retransmit the last packet
                 // (Assuming lastPacket is a function to resend the last packet)
@@ -108,7 +113,8 @@ void ClientSession::handleSession() {
                 setTimeout();
                 continue;
             } else {
-                std::cout << "Failed to receive data\n";
+                Logger::instance().log("Failed to receive data");
+                sessionState = SessionState::ERROR;
                 this->exit();
                 return;
             }
@@ -135,16 +141,22 @@ void ClientSession::handleSession() {
         } catch (const ParsingError& e) {
             ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
         catch (const OptionError& e) {
             ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
         catch (const std::exception& e) {
             ErrorPacket errorPacket(0, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
 
@@ -227,27 +239,35 @@ void ClientSession::setOptions(std::map<std::string, uint64_t> newOptions){
     // Check if the options map contains the "blksize" option
     if (options.find("blksize") != options.end()) {
         // Set the blockSize member variable to its value
-        std::cout << "Setting block size to " << options.at("blksize") << std::endl;
+        Logger::instance().log("Setting block size to " + std::to_string(options.at("blksize")));
         this->blockSize = options.at("blksize");
     }
 
     // Check if the options map contains the "timeout" option
     if (options.find("timeout") != options.end()) {
         // Set the timeout to its value
-        std::cout << "Setting timeout to " << options.at("timeout") << std::endl;
+        Logger::instance().log("Setting timeout to " + std::to_string(options.at("timeout")));
         this->timeout = options.at("timeout");
     }
 
     // Check if the options map contains the "tsize" option
     if (options.find("tsize") != options.end()) {
         // Set the tsize to its value
-        std::cout << "Setting tsize to " << options.at("tsize") << std::endl;
+        Logger::instance().log("Setting tsize to " + std::to_string(options.at("tsize")));
         this->tsize = options.at("tsize");
     }
 }
 
 void ClientSession::exit(){
-    std::cout << "Exiting client session" << std::endl;
+    if (sessionState == SessionState::ERROR && fileOpen && sessionType == SessionType::READ) {
+        Logger::instance().log("File was not correctly transfered, deleting file...");
+        if (std::remove(dst_filename.c_str())){
+            Logger::instance().log("Failed to delete file");
+        } else {
+            Logger::instance().log("File deleted");
+        }
+    }
+    Logger::instance().log("Exiting client session");
     writeStream.close();
     close(sessionSockfd);
 }
@@ -261,14 +281,6 @@ void ServerSession::handleSession() {
     setTimeout();
     char buffer[BUFFER_SIZE];
     if (sessionType == SessionType::WRITE){
-        std::cout << "Opening file on server: " << dst_filename << std::endl;
-        this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
-        if (!writeStream.is_open()) {
-            ErrorPacket errorPacket(2, "Access violation", dst_addr);
-            errorPacket.send(this, sessionSockfd);
-            return;
-        }
-
         // If "tsize" is set, check if there is enough disk space
         if (options.find("tsize") != options.end()) {
             struct statvfs stat;
@@ -276,6 +288,8 @@ void ServerSession::handleSession() {
                 // Error occurred getting filesystem stats
                 ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
                 errorPacket.send(this, sessionSockfd);
+                sessionState = SessionState::ERROR;
+                this->exit();
                 return;
             }
 
@@ -284,8 +298,21 @@ void ServerSession::handleSession() {
                 // Not enough disk space
                 ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
                 errorPacket.send(this, sessionSockfd);
+                sessionState = SessionState::ERROR;
+                this->exit();
                 return;
             }
+        }
+        Logger::instance().log("Opening file on server: " + dst_filename);
+        this->writeStream.open(dst_filename, std::ios::binary | std::ios::trunc | std::ios::out);
+        if (!writeStream.is_open()) {
+            ErrorPacket errorPacket(2, "Access violation", dst_addr);
+            errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
+            return;
+        } else {
+            fileOpen = true;
         }
 
         if(options.empty()){
@@ -300,15 +327,6 @@ void ServerSession::handleSession() {
             sessionState = SessionState::WAITING_AFTER_OACK;
         }
     } else if (sessionType == SessionType::READ){
-        std::cout << "Opening file on server: " << src_filename << std::endl;
-        this->readStream.open(src_filename, std::ios::binary | std::ios::in);
-        if (!readStream.is_open()) {
-            ErrorPacket errorPacket(2, "Access violation", dst_addr);
-            errorPacket.send(this, sessionSockfd);
-            this->exit();
-            return;
-        }
-
         // If "tsize" is set, check if there is enough disk space
         if (options.find("tsize") != options.end()) {
             struct statvfs stat;
@@ -316,6 +334,8 @@ void ServerSession::handleSession() {
                 // Error occurred getting filesystem stats
                 ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
                 errorPacket.send(this, sessionSockfd);
+                sessionState = SessionState::ERROR;
+                this->exit();
                 return;
             }
 
@@ -324,12 +344,26 @@ void ServerSession::handleSession() {
                 // Not enough disk space
                 ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
                 errorPacket.send(this, sessionSockfd);
+                sessionState = SessionState::ERROR;
+                this->exit();
                 return;
             }
 
             // Set the tsize to the actual file size
             this->tsize = std::filesystem::file_size(src_filename);
             options["tsize"] = tsize;
+        }
+
+        Logger::instance().log("Opening file on server: " + src_filename);
+        this->readStream.open(src_filename, std::ios::binary | std::ios::in);
+        if (!readStream.is_open()) {
+            ErrorPacket errorPacket(2, "Access violation", dst_addr);
+            errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
+            return;
+        } else {
+            fileOpen = true;
         }
 
         if (options.empty()){
@@ -339,6 +373,7 @@ void ServerSession::handleSession() {
             } catch (const std::runtime_error& e) {
                 ErrorPacket errorPacket(3, "Disk full or allocation exceeded", dst_addr);
                 errorPacket.send(this, sessionSockfd);
+                sessionState = SessionState::ERROR;
                 this->exit();
                 return;
             }
@@ -358,9 +393,10 @@ void ServerSession::handleSession() {
     }
     socklen_t dst_len = sizeof(dst_addr);
     while(true){
-        if(stopFlag->load()){
+        if(stopFlagServer->load()){
             ErrorPacket errorPacket(0, "Server shutdown", dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
             this->exit();
             return;
         }
@@ -370,12 +406,13 @@ void ServerSession::handleSession() {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Timeout occurred
                 if (++retries > 3) {
-                    std::cout << "Max retries reached, giving up." << std::endl;
+                    Logger::instance().log("Max retries reached, giving up.");
+                    sessionState = SessionState::ERROR;
                     this->exit();
                     return;
                 }
 
-                std::cout << "Timeout, retransmitting (attempt " << retries << ")." << std::endl;
+                Logger::instance().log("Timeout, retransmitting (attempt " + std::to_string(retries) + ").");
 
                 lastPacket->send(this, sessionSockfd);
 
@@ -384,7 +421,8 @@ void ServerSession::handleSession() {
                 setTimeout();
                 continue;
             } else {
-                std::cout << "Failed to receive data\n";
+                Logger::instance().log("Failed to receive data");
+                sessionState = SessionState::ERROR;
                 this->exit();
                 return;
             }
@@ -396,6 +434,7 @@ void ServerSession::handleSession() {
         if (srcTID != this->srcTID){
             ErrorPacket errorPacket(5, "Unknown transfer ID", dst_addr);
             errorPacket.send(this, sessionSockfd);
+            continue;
         }
 
         std::unique_ptr<Packet> packet;
@@ -404,16 +443,22 @@ void ServerSession::handleSession() {
         } catch (const ParsingError& e) {
             ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
         catch (const OptionError& e) {
             ErrorPacket errorPacket(ParsingError::errorCode, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
         catch (const std::exception& e) {
             ErrorPacket errorPacket(0, e.what(), dst_addr);
             errorPacket.send(this, sessionSockfd);
+            sessionState = SessionState::ERROR;
+            this->exit();
             return;
         }
 
@@ -429,21 +474,21 @@ void ServerSession::setOptions(){
         // Check if the options map contains the "blksize" option
     if (options.find("blksize") != options.end()) {
         // Set the blockSize member variable to its value
-        std::cout << "Setting block size to " << options.at("blksize") << std::endl;
+        Logger::instance().log("Setting block size to " + std::to_string(options.at("blksize")));
         this->blockSize = options.at("blksize");
     }
 
     // Check if the options map contains the "timeout" option
     if (options.find("timeout") != options.end()) {
         // Set the timeout to its value
-        std::cout << "Setting timeout to " << options.at("timeout") << std::endl;
+        Logger::instance().log("Setting timeout to " + std::to_string(options.at("timeout")));
         this->timeout = options.at("timeout");
     }
 
     // Check if the options map contains the "tsize" option
     if (options.find("tsize") != options.end()) {
         // Set the tsize to its value
-        std::cout << "Setting tsize to " << options.at("tsize") << std::endl;
+        Logger::instance().log("Setting tsize to " + std::to_string(options.at("tsize")));
         this->tsize = options.at("tsize");
     }
 }
@@ -462,7 +507,15 @@ std::vector<char> ServerSession::readDataBlock() {
 }
 
 void ServerSession::exit(){
-    std::cout << "Exiting server session" << std::endl;
+    Logger::instance().log("Exiting server session");
+    if (sessionState == SessionState::ERROR && fileOpen && sessionType == SessionType::WRITE) {
+        Logger::instance().log("File was not correctly transfered, deleting file...");
+        if (std::remove(dst_filename.c_str())){
+            Logger::instance().log("Failed to delete file");
+        } else {
+            Logger::instance().log("File deleted");
+        }
+    }
     writeStream.close();
     readStream.close();
     close(sessionSockfd);

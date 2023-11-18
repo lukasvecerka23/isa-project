@@ -31,13 +31,13 @@ public:
     static const std::set<std::string> supportedOptions;
     RequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr);
     std::vector<char> serialize() const override;
+    static std::unique_ptr<RequestPacket> parse(sockaddr_in addr, const char* buffer, size_t size);
 };
 
 class ReadRequestPacket : public RequestPacket {
 public:
     ReadRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr);
     uint16_t getOpcode() const override { return 1; } // RRQ opcode
-    static ReadRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession* session) const override;
     void handleServer(ServerSession* session) const override;
 };
@@ -46,7 +46,6 @@ class WriteRequestPacket : public RequestPacket {
 public:
     WriteRequestPacket(const std::string& filename, DataMode mode, std::map<std::string, uint64_t> options, sockaddr_in addr);
     uint16_t getOpcode() const override { return 2; } // WRQ opcode
-    static WriteRequestPacket parse(sockaddr_in addr, const char* buffer, size_t size);
     void handleClient(ClientSession* session) const override;
     void handleServer(ServerSession* session) const override;
 };
