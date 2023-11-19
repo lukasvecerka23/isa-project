@@ -13,23 +13,25 @@
 #include <sys/statvfs.h>
 
 
-bool checkOptions(std::map<std::string, uint64_t> options){
+std::map<std::string, uint64_t> filterOptions(std::map<std::string, uint64_t> options){
     if (options.find("blksize") != options.end()){
-        if (options["blksize"] < MIN_BLOCK_SIZE || options["blksize"] > MAX_BLOCK_SIZE){
-            return false;
+        if (options["blksize"] < MIN_BLOCK_SIZE){
+            options.erase("blksize");
+        } else if (options["blksize"] > MAX_BLOCK_SIZE){
+            options["blksize"] = MAX_BLOCK_SIZE;
         }
     }
     if (options.find("timeout") != options.end()){
         if (options["timeout"] < MIN_TIMEOUT || options["timeout"] > MAX_TIMEOUT){
-            return false;
+            options.erase("timeout");
         }
     }
     if (options.find("tsize") != options.end()){
         if (options["tsize"] < MIN_TSIZE || options["tsize"] > MAX_TSIZE){
-            return false;
+            options.erase("tsize");
         }
     }
-    return true;
+    return options;
 }
 
 std::pair<std::string, const char*> parseNetasciiString(const char* buffer, const char* start, const char* end) {
@@ -179,23 +181,23 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
             continue;
         }
 
-        int optionValue;
+        uint64_t optionValue;
         try{
-            optionValue = std::stoi(optionValueStr);
+            optionValue = std::stoull(optionValueStr);
         } catch (const std::exception& e){
-            throw OptionError("Invalid option value");
+            options.erase(optionName);
+            continue;
         }
 
         if (optionName == "tsize" && opcode == 1 && optionValue != 0){
-            throw OptionError("Transfer size for RRQ must be 0");
+            options.erase("tsize");
+            continue;
         }
 
         options[optionName] = optionValue;
-        
     }
-    if (!checkOptions(options)){
-        throw OptionError("Invalid option values");
-    }
+
+    options = filterOptions(options);
 
     
     if (opcode == 1){
@@ -821,18 +823,17 @@ OACKPacket OACKPacket::parse(sockaddr_in addr, const char* buffer, size_t buffer
             continue;
         }
 
-        int optionValue;
+        uint64_t optionValue;
         try{
-            optionValue = std::stoi(optionValueStr);
+            optionValue = std::stoull(optionValueStr);
         } catch (const std::exception& e){
             throw OptionError("Invalid option value");
         }
         options[optionName] = optionValue;
     }
 
-    if (!checkOptions(options)){
-        throw OptionError("One of the options has an invalid value");
-    }
+    options = filterOptions(options);
+
     std::string message = "OACK " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + optMessage;
     Logger::instance().error(message);
     return OACKPacket(options, addr);

@@ -49,15 +49,8 @@ wrong_rrq_wrq_test_cases = [
         (b'\x00\x01test\x00octet\x00blksize\x001024\x00timeout\x0030\x00tsize\x0010000', 8),  # Missing null byte after tsize value
         (b'\x00\x01test\x00octet\x00blksize\x001024\x00timeout\x0030\x00tsize\x0010000\x00option\x00', 8),  # Unknown option
         (b'\x00\x01test\x00octet\x00blksize\x001024\x00timeout\x0030\x00tsize\x0010000\x00option\x00value', 8),  # Missing null byte after unknown option value
-        (b'\x00\x01test\x00octet\x00timeout\x00256\x00', 8), # Timeout value too big
-        (b'\x00\x01test\x00octet\x00timeout\x00-1\x00', 8), # Timeout under 0
-        (b'\x00\x01test\x00octet\x00blksize\x007\x00', 8), # Block size value under 8
-        (b'\x00\x01test\x00octet\x00blksize\x0065467\x00', 8), # Block size too big
-        (b'\x00\x01test\x00octet\x00tsize\x00-1\x00', 8), # Tsize under 0
-        (b'\x00\x01test\x00octet\x00tsize\x0099999999999999999999999999999\x00', 8), # Tsize too big
         (b'\x00\x01test/filename\x00octet\x00', 1), # Filename with subdirectory
-        (b'\x00\x01test\x00octet\x00blksize\x001024\x00blksize\x0030', 8),  # Duplicate blksize option
-        (b'\x00\x01test\x00octet\x00tsize\x0030\x00', 8)
+        (b'\x00\x01test\x00octet\x00blksize\x001024\x00blksize\x0030', 8),
     ]
 
 @pytest.mark.parametrize('data, expected_error_code', wrong_rrq_wrq_test_cases)
@@ -97,10 +90,32 @@ correct_options_test_cases = [
     (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'BLKSIZE\x001024\x00', 6),  # RRQ for 'test' in octet mode with BLKSIZE option
     (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TIMEOUT\x00255\x00', 6),  # RRQ for 'test' in octet mode with TIMEOUT option
     (b'\x00\x01' + b'test\x00' + b'octet\x00' + b'TSIZE\x000\x00', 6),  # RRQ for 'test' in octet mode with TSIZE option
+    (b'\x00\x01test\x00octet\x00blksize\x0065467\x00', 6), # Block size exceed 65464 but server should accept it and set it to 65464
 ]
 
 @pytest.mark.parametrize('data,expected_opcode', correct_options_test_cases)
 def test_correct_options(data, expected_opcode):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(data, server_address)
+            data, dst_addr = sock.recvfrom(1024)
+            opcode = struct.unpack('!H', data[:2])[0]
+            assert opcode == expected_opcode
+            exit_test(sock, dst_addr)
+            time.sleep(1)
+
+
+options_out_of_range_test_cases = [
+    (b'\x00\x01test\x00octet\x00timeout\x00256\x00', 3), # Timeout value too big
+    (b'\x00\x01test\x00octet\x00timeout\x00-1\x00', 3), # Timeout under 0
+    (b'\x00\x01test\x00octet\x00blksize\x007\x00', 3), # Block size value under 8
+    (b'\x00\x01test\x00octet\x00tsize\x00-1\x00', 3), # Tsize under 0
+    (b'\x00\x01test\x00octet\x00tsize\x004290183241\x00', 3), # 65464*65535 + 1 Tsize too big
+    (b'\x00\x01test\x00octet\x00tsize\x0030\x00', 3), # Read request with tsize not 0
+    (b'\x00\x01test\x00octet\x00blksize\x00aaaa\x00', 3), # Block size not a number
+]
+
+@pytest.mark.parametrize('data,expected_opcode', options_out_of_range_test_cases)
+def test_options_out_of_range(data, expected_opcode):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(data, server_address)
             data, dst_addr = sock.recvfrom(1024)

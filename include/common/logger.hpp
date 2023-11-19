@@ -1,5 +1,4 @@
 #include <iostream>
-#include <mutex>
 
 class Logger {
 public:
@@ -9,18 +8,14 @@ public:
     }
 
     void log(const std::string& message) {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        std::cout << message << std::endl;
+        std::cout << message + "\n";
     }
 
     void error(const std::string& message) {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        std::cerr << message << std::endl;
+        std::cerr << message + "\n";
     }
 
 private:
-    std::mutex log_mutex;
-
     // Private constructor to prevent instantiation
     Logger() {}
 };
