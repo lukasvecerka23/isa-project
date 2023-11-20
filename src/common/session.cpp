@@ -12,6 +12,8 @@
 #include <fstream>
 #include <vector>
 #include <unistd.h>
+#include <algorithm>
+#include <filesystem>
 
 // Define stopFlag
 std::shared_ptr<std::atomic<bool>> stopFlagServer = std::make_shared<std::atomic<bool>>(false);

@@ -24,6 +24,10 @@
 #include <sys/socket.h>
 #include <fstream>
 #include <map>
+#include <memory>
+#include <atomic>
+#include <vector>
+#include <iostream>
 
 /**
  * @brief Flag for handling SIGINT on server
