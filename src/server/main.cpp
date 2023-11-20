@@ -1,4 +1,8 @@
-// server.cpp
+/**
+ * @file server/main.cpp
+ * @brief Entrypoint for TFTP server
+ * @author Lukas Vecerka (xvecer30)
+*/
 #include <iostream>
 #include <string>
 #include <getopt.h>
@@ -7,11 +11,13 @@
 #include "common/logger.hpp"
 #include <csignal>
 
-// include other necessary headers
-
+/**
+ * Signal handler for SIGINT
+ * @param signal The signal number
+*/
 void signalHandler(int signal) {
-    Logger::instance().log("Server is going to stop...");
     if (signal == SIGINT){
+        Logger::instance().log("Server is going to stop...");
         stopFlagServer->store(true);
     }
     
@@ -23,6 +29,12 @@ static struct option long_options[] = {
     {0, 0, 0, 0} // End of array need to be filled with 0s
 };
 
+/**
+ * Entrypoint for TFTP Server
+ * @param argc The number of arguments
+ * @param argv The arguments
+ * @return 0 if successful, 1 otherwise
+*/
 int main(int argc, char* argv[]) {
     int port = 69;
     std::string root_dirpath;
@@ -32,9 +44,16 @@ int main(int argc, char* argv[]) {
     while ((option = getopt_long(argc, argv, "p:", long_options, &option_index)) != -1) {
         switch (option) {
             case 'p':
-                port = std::stoi(optarg);
+                try{
+                    port = std::stoi(optarg);
+                } catch (const std::exception& e) {
+                    Logger::instance().log("Invalid port number. Port should be between 1 and 65535.");
+                    Logger ::instance().log("Usage: " + std::string(argv[0]) + " [-p port] root_dirpath");
+                    return 1;
+                }
                 if (port <= 0 || port > 65535) {
-                    Logger::instance().log("Invalid port number.");
+                    Logger::instance().log("Invalid port number. Port should be between 1 and 65535.");
+                    Logger ::instance().log("Usage: " + std::string(argv[0]) + " [-p port] root_dirpath");
                     return 1;
                 }
                 break;
@@ -51,6 +70,7 @@ int main(int argc, char* argv[]) {
         root_dirpath = argv[optind];
         Logger::instance().log("Root directory path: " + root_dirpath);
     } else {
+        Logger::instance().log("Root directory path is not specified.");
         Logger ::instance().log("Usage: " + std::string(argv[0]) + " [-p port] root_dirpath");
         return 1;
     }
@@ -59,8 +79,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     // Initialize and start the TFTP server
     try {
-        TFTPServer::initialize(port, root_dirpath);
-        TFTPServer& tftpServer = TFTPServer::getInstance();
+        TFTPServer tftpServer(port, root_dirpath);
         tftpServer.start();
     } catch (const std::exception& e) {
         Logger::instance().log("Failed to start TFTP server: " + std::string(e.what()));

@@ -1,4 +1,8 @@
-// server.cpp
+/**
+ * @file client/main.cpp
+ * @brief Entrypoint for TFTP client
+ * @author Lukas Vecerka (xvecer30)
+*/
 #include <iostream>
 #include <string>
 #include <getopt.h>
@@ -39,9 +43,17 @@ int main(int argc, char* argv[]) {
                 hostname = optarg;
                 break;
             case 'p':
-                port = std::stoi(optarg);
-                if (port <= 0) {
-                    Logger::instance().log("Invalid port number.");
+                try{
+                    port = std::stoi(optarg);
+                } catch (const std::exception& e) {
+                    Logger::instance().log("Invalid port number. Port should be between 1 and 65535.");
+                    Logger::instance().log("Usage: " + std::string(argv[0]) + " -h hostname [-p port] [-f filepath] -t dest_filepath");
+                    return 1;
+                }
+                
+                if (port <= 0 || port > 65535) {
+                    Logger::instance().log("Invalid port number. Port should be between 1 and 65535.");
+                    Logger::instance().log("Usage: " + std::string(argv[0]) + " -h hostname [-p port] [-f filepath] -t dest_filepath");
                     return 1;
                 }
                 break;
@@ -59,7 +71,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (hostname.empty() || dest_filepath.empty()) {
+    if (hostname.empty() || dest_filepath.empty() || (!upload && filepath.empty())) {
+        Logger::instance().log("Missing required arguments.");
         Logger::instance().log("Usage: " + std::string(argv[0]) + " -h hostname [-p port] [-f filepath] -t dest_filepath");
         return 1;
     }

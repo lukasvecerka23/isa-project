@@ -1,4 +1,8 @@
-// tftp_server.cpp
+/**
+ * @file client/tftp_client.cpp
+ * @brief Implementation of TFTP Client
+ * @author Lukas Vecerka (xvecer30)
+*/
 #include "client/tftp_client.hpp"
 #include "common/packets.hpp"
 #include <iostream>
@@ -38,8 +42,8 @@ void TFTPClient::upload(std::string dest_filepath) {
     // Initialize hints for getaddrinfo
     struct addrinfo hints, *res;
     std::memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;      // AF_INET for IPv4
-    hints.ai_socktype = SOCK_DGRAM; // Datagram socket for UDP
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
     // Resolve hostname to IP address
     if (getaddrinfo(hostname.c_str(), nullptr, &hints, &res) != 0) {
@@ -56,9 +60,9 @@ void TFTPClient::upload(std::string dest_filepath) {
     
     struct sockaddr_in from_addr;
 
-    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE, options);
+    ClientSession session(sockfd, from_addr, "stdin", dest_filepath, DataMode::OCTET, SessionType::WRITE, options, "");
 
-    WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options, server_addr); // Create an ACK packet with block number 0
+    WriteRequestPacket packet(dest_filepath, DataMode::OCTET, options, server_addr);
     packet.send(&session, sockfd);
 
     session.handleSession();
@@ -87,7 +91,7 @@ void TFTPClient::download(std::string filepath, std::string dest_filepath) {
     std::map<std::string, uint64_t> options;
 
     struct sockaddr_in from_addr;
-    ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options);
+    ClientSession session(sockfd, from_addr, filepath, dest_filepath, DataMode::OCTET, SessionType::READ, options, "");
     ReadRequestPacket packet(filepath, DataMode::OCTET, options, server_addr);
     packet.send(&session, sockfd);
 

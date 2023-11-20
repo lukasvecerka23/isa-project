@@ -208,7 +208,6 @@ def test_wrong_packet():
         assert opcode == 5
         assert err_code == 4
 
-# TODO: Test for exponential backoff
 def test_exp_backoff():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         send_rrq(sock, b'test', b'octet', server_address)
