@@ -56,3 +56,6 @@ $(BUILD_DIR)/common $(BUILD_DIR)/client $(BUILD_DIR)/server:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+archive:
+	tar -cvf xvecer30.tar src include Makefile README manual.pdf test_tftp.py

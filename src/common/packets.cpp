@@ -221,11 +221,11 @@ std::unique_ptr<RequestPacket> RequestPacket::parse(sockaddr_in addr, const char
 
     
     if (opcode == 1){
-        std::string message = "RRQ " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + filename + " " + modeStr + " " + optMessage;
+        std::string message = "RRQ " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " \"" + filename + "\" " + modeStr + " " + optMessage;
         Logger::instance().error(message);
         return std::make_unique<ReadRequestPacket>(filename, mode, options, addr);
     } else {
-        std::string message = "WRQ " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " " + filename + " " + modeStr + " " + optMessage;
+        std::string message = "WRQ " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + " \"" + filename + "\" " + modeStr + " " + optMessage;
         Logger::instance().error(message);
         return std::make_unique<WriteRequestPacket>(filename, mode, options, addr);
     }
@@ -858,7 +858,7 @@ std::vector<char> ErrorPacket::serialize() const {
 }
 
 void ErrorPacket::handleClient(ClientSession* session) const {
-    std::string message = "ERROR " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + ":" + std::to_string(htons(session->src_addr.sin_port)) + " " + std::to_string(errorCode) + " " + errorMessage;
+    std::string message = "ERROR " + std::string(inet_ntoa(addr.sin_addr)) + ":" + std::to_string(ntohs(addr.sin_port)) + ":" + std::to_string(htons(session->src_addr.sin_port)) + " " + std::to_string(errorCode) + " \"" + errorMessage+"\"";
     Logger::instance().error(message);
     if (session->sessionState == SessionState::WAITING_OACK){
         // Client is waiting on OACK packet but received an error packet
